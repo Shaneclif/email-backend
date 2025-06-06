@@ -8,7 +8,7 @@ const db = require('./db');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -102,6 +102,7 @@ app.get('/admin/logs', async (req, res) => {
 });
 
 // Start the server
-app.listen(PORT, () => {
+
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
 });
