@@ -4,7 +4,8 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const db = require('./db'); // 👈 Import SQLite connection
+const db = require('./db');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,7 +43,6 @@ app.post('/send-code', (req, res) => {
       return res.status(500).json({ error: 'Failed to send email' });
     }
 
-    // Insert log into SQLite DB
     db.run(
       `INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)`,
       [email, amount, reference],
@@ -59,12 +59,7 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-const path = require('path');
-
-// Serve logs at /admin/logs
+// Admin logs view
 app.get('/admin/logs', async (req, res) => {
   try {
     const rows = await db.all('SELECT * FROM logs ORDER BY timestamp DESC');
@@ -105,5 +100,8 @@ app.get('/admin/logs', async (req, res) => {
     res.status(500).send("Error fetching logs");
   }
 });
+
+// Start the server
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+});
