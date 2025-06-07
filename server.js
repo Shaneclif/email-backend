@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const express = require('express');
+const session = require('express-session');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -10,10 +11,62 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// ✅ Middleware
 app.use(cors());
 app.use(bodyParser.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'supersecretkey',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set true only for HTTPS
+}));
+
+// ✅ Test root route
+app.get('/', (req, res) => {
+  res.send('WakaTV backend is running');
+});
+
+// ✅ Admin Login Route
+app.post('/admin/login', (req, res) => {
+  const { username, password } = req.body;
+  console.log("Login ENV CHECK:");
+console.log("Expected username:", process.env.ADMIN_USERNAME);
+console.log("Expected password:", process.env.ADMIN_PASSWORD);
+console.log("Received username:", username);
+console.log("Received password:", password);
 
 
+  if (
+    username === process.env.ADMIN_USERNAME &&
+    password === process.env.ADMIN_PASSWORD
+  ) {
+    req.session.admin = true;
+    res.json({ success: true, message: 'Logged in' });
+  } else {
+    res.status(401).json({ success: false, message: 'Invalid credentials' });
+  }
+});
+
+// ✅ Middleware to protect admin routes
+function isAdmin(req, res, next) {
+  if (req.session && req.session.admin) {
+    next();
+  } else {
+    res.status(403).json({ message: 'Unauthorized' });
+  }
+}
+
+// ✅ Admin Logout Route
+app.get('/admin/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      return res.status(500).json({ message: 'Logout failed' });
+    }
+    res.json({ message: 'Logged out successfully' });
+  });
+});
+
+// ✅ Email transporter
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -24,7 +77,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// 
+// ✅ Generate random code
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -78,10 +131,10 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-// ✅ Admin Logs View
-app.get('/admin/logs', async (req, res) => {
+// ✅ Admin Logs View (Protected)
+app.get('/admin/logs', isAdmin, async (req, res) => {
   try {
-   const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
+    const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
     res.send(`
       <html>
         <head>
@@ -120,7 +173,11 @@ app.get('/admin/logs', async (req, res) => {
   }
 });
 
-// ✅ Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
+// ✅ Start the server
+app.listen(PORT, '0.0.0.0', (err) => {
+  if (err) {
+    console.error('Server failed to start:', err);
+  } else {
+    console.log(`Server is running on port ${PORT}`);
+  }
 });
