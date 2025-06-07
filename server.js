@@ -1,31 +1,4 @@
-require('dotenv').config();
-
-const express = require('express');
-const nodemailer = require('nodemailer');
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const db = require('./db');
-const path = require('path');
-
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-app.use(cors());
-app.use(bodyParser.json());
-
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp-relay.brevo.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_PASS
-  }
-});
-
-// 
-function generateCode() {
+]
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 6; i++) {
@@ -78,10 +51,10 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-// ✅ Admin Logs View
-app.get('/admin/logs', async (req, res) => {
+// ✅ Admin Logs View (Protected)
+app.get('/admin/logs', isAdmin, async (req, res) => {
   try {
-   const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
+    const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
     res.send(`
       <html>
         <head>
@@ -120,7 +93,11 @@ app.get('/admin/logs', async (req, res) => {
   }
 });
 
-// ✅ Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
+// ✅ Start the server
+app.listen(PORT, '0.0.0.0', (err) => {
+  if (err) {
+    console.error('Server failed to start:', err);
+  } else {
+    console.log(`Server is running on port ${PORT}`);
+  }
 });
