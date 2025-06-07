@@ -132,25 +132,25 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-// ✅ Admin get logs
+// ✅ Admin get logs - fixed response format
 app.get('/admin/logs-data', isAdmin, (req, res) => {
   db.all('SELECT * FROM logs ORDER BY id DESC', (err, rows) => {
     if (err) {
       console.error('Error getting logs:', err);
-      return res.status(500).json({ error: 'Failed to load logs' });
+      return res.status(500).json({ success: false, error: 'Failed to load logs' });
     }
-    res.json(rows);
+    res.json({ success: true, logs: rows });
   });
 });
 
-// ✅ Admin get available codes
+// ✅ Admin get codes - fixed response format
 app.get('/admin/codes', isAdmin, (req, res) => {
-  db.all('SELECT * FROM codes WHERE used = 0', (err, rows) => {
+  db.all('SELECT * FROM codes ORDER BY id DESC', (err, rows) => {
     if (err) {
       console.error('Error getting codes:', err);
-      return res.status(500).json({ error: 'Failed to load codes' });
+      return res.status(500).json({ success: false, error: 'Failed to load codes' });
     }
-    res.json(rows);
+    res.json({ success: true, codes: rows });
   });
 });
 
@@ -173,7 +173,7 @@ app.post('/admin/upload-codes', isAdmin, (req, res) => {
   res.json({ success: true, message: 'Codes uploaded successfully' });
 });
 
-// ✅ Optional debug: show logs in raw HTML
+// ✅ Optional debug route
 app.get('/admin/logs', isAdmin, (req, res) => {
   db.all('SELECT * FROM logs ORDER BY timestamp DESC', (err, rows) => {
     if (err) {
