@@ -11,6 +11,7 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+<<<<<<< HEAD
 // ✅ CORS setup for Render + Netlify
 app.use(cors({
   origin: ['http://localhost:5500', 'https://nimble-pudding-0824c3.netlify.app'],
@@ -22,7 +23,31 @@ app.use((req, res, next) => {
   next();
 });
 
+=======
+// ✅ Middleware
+app.use(cors());
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
 app.use(bodyParser.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'supersecretkey',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set true only for HTTPS
+}));
+
+// ✅ Test root route
+app.get('/', (req, res) => {
+  res.send('WakaTV backend is running');
+});
+
+// ✅ Admin Login Route
+app.post('/admin/login', (req, res) => {
+  const { username, password } = req.body;
+  console.log("Login ENV CHECK:");
+console.log("Expected username:", process.env.ADMIN_USERNAME);
+console.log("Expected password:", process.env.ADMIN_PASSWORD);
+console.log("Received username:", username);
+console.log("Received password:", password);
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'supersecretkey',
@@ -34,6 +59,7 @@ app.use(session({
   }
 }));
 
+<<<<<<< HEAD
 // ✅ Root route
 app.get('/', (req, res) => {
   res.send('WakaTV backend is running');
@@ -42,6 +68,8 @@ app.get('/', (req, res) => {
 // ✅ Admin login
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
+=======
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
   if (
     username === process.env.ADMIN_USERNAME &&
     password === process.env.ADMIN_PASSWORD
@@ -56,21 +84,38 @@ app.post('/admin/login', (req, res) => {
 // ✅ Middleware to protect admin routes
 function isAdmin(req, res, next) {
   if (req.session && req.session.admin) {
+<<<<<<< HEAD
     return next();
+=======
+    next();
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
   } else {
     res.status(403).json({ message: 'Unauthorized' });
   }
 }
 
+<<<<<<< HEAD
 // ✅ Admin logout
 app.get('/admin/logout', (req, res) => {
   req.session.destroy(err => {
     if (err) return res.status(500).json({ message: 'Logout failed' });
+=======
+// ✅ Admin Logout Route
+app.get('/admin/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      return res.status(500).json({ message: 'Logout failed' });
+    }
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
     res.json({ message: 'Logged out successfully' });
   });
 });
 
+<<<<<<< HEAD
 // ✅ Nodemailer config
+=======
+// ✅ Email transporter
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -131,7 +176,11 @@ app.post('/send-code', (req, res) => {
   });
 });
 
+<<<<<<< HEAD
 // ✅ Admin logs HTML (optional)
+=======
+// ✅ Admin Logs View (Protected)
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
 app.get('/admin/logs', isAdmin, async (req, res) => {
   try {
     const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
@@ -143,11 +192,20 @@ app.get('/admin/logs', isAdmin, async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // ✅ Start server
 app.listen(PORT, '0.0.0.0', (err) => {
   if (err) {
     console.error('Failed to start server:', err);
   } else {
     console.log(`Server running on port ${PORT}`);
+=======
+// ✅ Start the server
+app.listen(PORT, '0.0.0.0', (err) => {
+  if (err) {
+    console.error('Server failed to start:', err);
+  } else {
+    console.log(`Server is running on port ${PORT}`);
+>>>>>>> f469e2c (Initial commit: WakaTV backend)
   }
 });
