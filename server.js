@@ -24,16 +24,20 @@ app.use((req, res, next) => {
 
 app.use(bodyParser.json());
 
-// ✅ Session setup for cross-origin
+const SQLiteStore = require('connect-sqlite3')(session); // if you want persistent sessions
+
 app.use(session({
+  store: new SQLiteStore({ db: 'sessions.sqlite', dir: './' }), // optional but recommended
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
-  saveUninitialized: true,
+  saveUninitialized: false,
   cookie: {
-    secure: true,       // Required on HTTPS (Render)
-    sameSite: 'none'    // Required for cross-origin (Netlify frontend)
+    secure: true,            // ✅ important for HTTPS
+    sameSite: 'none',        // ✅ allow cross-origin
+    maxAge: 24 * 60 * 60 * 1000 // 1 day
   }
 }));
+
 
 // ✅ Root route
 app.get('/', (req, res) => {
