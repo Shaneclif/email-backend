@@ -45,7 +45,7 @@ app.post('/send-code', (req, res) => {
   const accessCode = generateCode();
 
   const mailOptions = {
-    from: '"WakaTV" <8f10be001@smtp-brevo.com>',
+    from: '"WakaTV" <easywakatv@gmail.com>',
     to: email,
     subject: 'Your WakaTV Access Code',
     html: `
