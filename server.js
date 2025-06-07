@@ -11,9 +11,9 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// ✅ CORS setup
+// ✅ CORS setup for Render + Netlify (with credentials)
 app.use(cors({
-  origin: ['http://localhost:5500', 'https://nimble-pudding-0824c3.netlify.app'],
+  origin: 'https://nimble-pudding-0824c3.netlify.app',
   credentials: true
 }));
 
@@ -24,17 +24,18 @@ app.use((req, res, next) => {
 
 app.use(bodyParser.json());
 
+// ✅ Session setup for cross-origin
 app.use(session({
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
   saveUninitialized: true,
   cookie: {
-    secure: false, // true if using HTTPS
-    sameSite: 'lax'
+    secure: true,       // Required on HTTPS (Render)
+    sameSite: 'none'    // Required for cross-origin (Netlify frontend)
   }
 }));
 
-// ✅ Root test
+// ✅ Root route
 app.get('/', (req, res) => {
   res.send('WakaTV backend is running');
 });
@@ -71,7 +72,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// ✅ Nodemailer config
+// ✅ Email transporter (Gmail or Brevo)
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -82,7 +83,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ✅ Random code generator
+// ✅ Generate random access code
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -92,7 +93,7 @@ function generateCode() {
   return code;
 }
 
-// ✅ Send access code and log transaction
+// ✅ Send access code and log payment
 app.post('/send-code', (req, res) => {
   const { email, amount, reference } = req.body;
 
@@ -132,7 +133,7 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-// ✅ Admin get logs - fixed response format
+// ✅ Admin - Get logs
 app.get('/admin/logs-data', isAdmin, (req, res) => {
   db.all('SELECT * FROM logs ORDER BY id DESC', (err, rows) => {
     if (err) {
@@ -143,9 +144,9 @@ app.get('/admin/logs-data', isAdmin, (req, res) => {
   });
 });
 
-// ✅ Admin get codes - fixed response format
+// ✅ Admin - Get available codes
 app.get('/admin/codes', isAdmin, (req, res) => {
-  db.all('SELECT * FROM codes ORDER BY id DESC', (err, rows) => {
+  db.all('SELECT * FROM codes WHERE used = 0 ORDER BY id DESC', (err, rows) => {
     if (err) {
       console.error('Error getting codes:', err);
       return res.status(500).json({ success: false, error: 'Failed to load codes' });
@@ -154,12 +155,12 @@ app.get('/admin/codes', isAdmin, (req, res) => {
   });
 });
 
-// ✅ Admin upload codes
+// ✅ Admin - Upload codes
 app.post('/admin/upload-codes', isAdmin, (req, res) => {
   const { codes } = req.body;
 
   if (!codes || !Array.isArray(codes)) {
-    return res.status(400).json({ error: 'Invalid codes format' });
+    return res.status(400).json({ success: false, error: 'Invalid codes format' });
   }
 
   const stmt = db.prepare('INSERT INTO codes (code, used) VALUES (?, 0)');
@@ -173,18 +174,7 @@ app.post('/admin/upload-codes', isAdmin, (req, res) => {
   res.json({ success: true, message: 'Codes uploaded successfully' });
 });
 
-// ✅ Optional debug route
-app.get('/admin/logs', isAdmin, (req, res) => {
-  db.all('SELECT * FROM logs ORDER BY timestamp DESC', (err, rows) => {
-    if (err) {
-      res.status(500).send("Error fetching logs");
-    } else {
-      res.send(`<html><body><h2>Logs</h2><pre>${JSON.stringify(rows, null, 2)}</pre></body></html>`);
-    }
-  });
-});
-
-// ✅ Start server
+// ✅ Start the server
 app.listen(PORT, '0.0.0.0', (err) => {
   if (err) {
     console.error('Failed to start server:', err);
