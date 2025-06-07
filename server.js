@@ -13,9 +13,10 @@ const PORT = process.env.PORT || 10000;
 
 // ✅ CORS setup for Render + Netlify (with credentials)
 app.use(cors({
-  origin: 'https://nimble-pudding-0824c3.netlify.app',
+  origin: ['http://localhost:5500', 'https://nimble-pudding-0824c3.netlify.app'],
   credentials: true
 }));
+
 
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Credentials", "true");
@@ -27,14 +28,16 @@ app.use(bodyParser.json());
 const SQLiteStore = require('connect-sqlite3')(session); // if you want persistent sessions
 
 app.use(session({
-  store: new SQLiteStore({ db: 'sessions.sqlite', dir: './' }), // optional but recommended
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
   saveUninitialized: false,
+  store: new (require('connect-sqlite3')(session))({
+    db: 'sessions.sqlite',
+    dir: './sqlite3'
+  }),
   cookie: {
-    secure: true,            // ✅ important for HTTPS
-    sameSite: 'none',        // ✅ allow cross-origin
-    maxAge: 24 * 60 * 60 * 1000 // 1 day
+    secure: true,
+    sameSite: 'none' // allow cross-site cookies
   }
 }));
 
