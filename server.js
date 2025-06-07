@@ -8,19 +8,33 @@ const db = require('./db');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(bodyParser.json());
 
+
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp-relay.brevo.com',
+  port: 587,
+  secure: false,
   auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_PASS
+    user: process.env.BREVO_SMTP_USER,
+    pass: process.env.BREVO_SMTP_PASS
   }
 });
 
+// 
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+// ✅ Send code and log transaction
 app.post('/send-code', (req, res) => {
   const { email, amount, reference } = req.body;
 
@@ -28,13 +42,18 @@ app.post('/send-code', (req, res) => {
     return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const accessCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const accessCode = generateCode();
 
   const mailOptions = {
-    from: process.env.GMAIL_USER,
+    from: '"WakaTV" <8f10be001@smtp-brevo.com>',
     to: email,
-    subject: 'Your Access Code',
-    text: `Thank you! Your access code is: ${accessCode}`
+    subject: 'Your WakaTV Access Code',
+    html: `
+      <h2>Thanks for your purchase!</h2>
+      <p><strong>Amount Paid:</strong> R${amount}</p>
+      <p><strong>Your Access Code:</strong> <code>${accessCode}</code></p>
+      <p>Enjoy your service. Contact support@wakatv.co.za if you need help.</p>
+    `
   };
 
   transporter.sendMail(mailOptions, (err, info) => {
@@ -59,10 +78,10 @@ app.post('/send-code', (req, res) => {
   });
 });
 
-// Admin logs view
+// ✅ Admin Logs View
 app.get('/admin/logs', async (req, res) => {
   try {
-    const rows = await db.all('SELECT * FROM logs ORDER BY timestamp DESC');
+   const rows = await db.allAsync('SELECT * FROM logs ORDER BY timestamp DESC');
     res.send(`
       <html>
         <head>
@@ -101,8 +120,7 @@ app.get('/admin/logs', async (req, res) => {
   }
 });
 
-// Start the server
-
+// ✅ Start server
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server is running on port ${PORT}`);
 });
