@@ -18,6 +18,7 @@ const ORIGINS = [
   'https://nimble-pudding-0824c3.netlify.app'
 ];
 
+// Ensure no full-URL routes are used (only paths)
 app.set('trust proxy', 1);
 
 app.use(cors({
@@ -47,12 +48,12 @@ function isAdmin(req, res, next) {
   res.status(403).json({ success: false, message: 'Unauthorized' });
 }
 
-// Healthcheck
+// Healthcheck (root path only)
 app.get('/', (req, res) => {
   res.send('🎉 WakaTV backend is running');
 });
 
-// Admin login/logout
+// Admin login (path-only)
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -65,6 +66,7 @@ app.post('/admin/login', (req, res) => {
   res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
+// Admin logout
 app.get('/admin/logout', (req, res) => {
   req.session.destroy(err => {
     if (err) {
@@ -76,7 +78,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// Email & code gen
+// Email & code generation endpoint
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -125,7 +127,6 @@ app.post('/send-code', async (req, res) => {
 });
 
 // ─── PROTECTED ADMIN ENDPOINTS ─────────────────────────────
-
 // 1) Fetch payment logs
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   try {
@@ -148,7 +149,7 @@ app.get('/admin/codes', isAdmin, async (req, res) => {
   }
 });
 
-// 3) Bulk‐upload codes
+// 3) Bulk-upload codes
 app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   try {
     const { codes } = req.body;
@@ -160,7 +161,6 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
     for (let code of codes) {
       code = code.trim();
       if (code) {
-        // ignore duplicates
         await db.runAsync(
           `INSERT OR IGNORE INTO codes (code) VALUES (?)`,
           [code]
@@ -171,7 +171,7 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
 
     res.json({ success: true, message: 'Codes uploaded' });
   } catch (err) {
-    await db.runAsync('ROLLBACK').catch(()=>{});
+    await db.runAsync('ROLLBACK').catch(() => {});
     console.error('❌ upload-codes error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
