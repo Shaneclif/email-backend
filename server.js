@@ -1,14 +1,4 @@
 // server.js
-
-/**
- * WakaTV Email Backend
- * --------------------
- * - Uses absolute paths for SQLite files (avoids SQLITE_CANTOPEN on Render)
- * - Initializes 'logs' & 'codes' tables if they don't exist
- * - Stores Express sessions in SQLite via connect-sqlite3
- * - Remembers that Render's filesystem is ephemeral: DB resets on each deploy unless you mount a disk
- */
-
 require('dotenv').config();
 
 const express       = require('express');
@@ -17,103 +7,52 @@ const SQLiteStore   = require('connect-sqlite3')(session);
 const nodemailer    = require('nodemailer');
 const cors          = require('cors');
 const bodyParser    = require('body-parser');
-const sqlite3       = require('sqlite3').verbose();
-const fs            = require('fs');
 const path          = require('path');
+const db            = require('./db');
 
-const app = express();
-const PORT = process.env.PORT || 10000;
+const app    = express();
+const PORT   = process.env.PORT || 10000;
+const isProd = process.env.NODE_ENV === 'production';
+const ORIGINS = [
+  'http://localhost:5500',
+  'https://nimble-pudding-0824c3.netlify.app'
+];
 
-// ----------------------------------------------------------------------------
-// 1. Ensure 'db' directory exists for both main DB and session store
-// ----------------------------------------------------------------------------
-const DB_DIR = path.join(__dirname, 'db');
-if (!fs.existsSync(DB_DIR)) {
-  fs.mkdirSync(DB_DIR);
-}
+app.set('trust proxy', 1);
 
-// ----------------------------------------------------------------------------
-// 2. Open (or create) the main SQLite database at an absolute path
-// ----------------------------------------------------------------------------
-const DB_PATH = path.join(DB_DIR, 'wakatv.sqlite');
-const db = new sqlite3.Database(DB_PATH, err => {
-  if (err) {
-    console.error(' Error opening SQLite database:', err);
-    process.exit(1);
-  }
-  console.log(' Connected to SQLite database at', DB_PATH);
-
-  // 2a. Initialize tables if they don't exist
-  db.run(`
-    CREATE TABLE IF NOT EXISTS logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT,
-      amount INTEGER,
-      reference TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS codes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      code TEXT UNIQUE,
-      used INTEGER DEFAULT 0,
-      usedBy TEXT,
-      usedAt DATETIME
-    )
-  `);
-});
-
-// ----------------------------------------------------------------------------
-// 3. Middleware
-// ----------------------------------------------------------------------------
 app.use(cors({
-  origin: [
-    'http://localhost:5500',
-    'https://nimble-pudding-0824c3.netlify.app'
-  ],
-  credentials: true
+  origin: ORIGINS,
+  credentials: true,
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type']
 }));
-
-// Required to allow cross-site cookies
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Credentials', 'true');
-  next();
-});
+app.options('*', cors());
 
 app.use(bodyParser.json());
-
-// ----------------------------------------------------------------------------
-// 4. Session store (connect-sqlite3) configuration
-//    - Sessions stored in db/sessions.sqlite
-//    - Note: Render’s disk is ephemeral; sessions reset on each deploy
-// ----------------------------------------------------------------------------
 app.use(session({
-  store: new SQLiteStore({
-    dir: DB_DIR,
-    db: 'sessions.sqlite',
-    // you can also set table: 'sessions', // default
-  }),
+  store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,    // set true if you serve over HTTPS
-    sameSite: 'lax'   // 'none' if you need cross-site in some cases
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 1000 * 60 * 60 * 2
   }
 }));
 
-// ----------------------------------------------------------------------------
-// 5. Root health check
-// ----------------------------------------------------------------------------
+function isAdmin(req, res, next) {
+  console.log('[isAdmin] session:', req.session);
+  if (req.session && req.session.admin) return next();
+  res.status(403).json({ success: false, message: 'Unauthorized' });
+}
+
+// Healthcheck
 app.get('/', (req, res) => {
-  res.send('WakaTV backend is running');
+  res.send('🎉 WakaTV backend is running');
 });
 
-// ----------------------------------------------------------------------------
-// 6. Admin Authentication
-// ----------------------------------------------------------------------------
+// Admin login/logout
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -126,21 +65,18 @@ app.post('/admin/login', (req, res) => {
   res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
-function isAdmin(req, res, next) {
-  if (req.session?.admin) return next();
-  res.status(403).json({ success: false, message: 'Unauthorized' });
-}
-
 app.get('/admin/logout', (req, res) => {
   req.session.destroy(err => {
-    if (err) return res.status(500).json({ success: false, message: 'Logout failed' });
-    res.json({ success: true, message: 'Logged out successfully' });
+    if (err) {
+      console.error('[logout] error:', err);
+      return res.status(500).json({ success: false, message: 'Logout failed' });
+    }
+    res.clearCookie('connect.sid');
+    res.json({ success: true, message: 'Logged out' });
   });
 });
 
-// ----------------------------------------------------------------------------
-// 7. Nodemailer setup
-// ----------------------------------------------------------------------------
+// Email & code gen
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -151,9 +87,6 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// ----------------------------------------------------------------------------
-// 8. Helper: generate random 6-char code
-// ----------------------------------------------------------------------------
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -163,98 +96,87 @@ function generateCode() {
   return code;
 }
 
-// ----------------------------------------------------------------------------
-// 9. Send code & log transaction endpoint
-// ----------------------------------------------------------------------------
-app.post('/send-code', (req, res) => {
-  const { email, amount, reference } = req.body;
-  if (!email || !amount || !reference) {
-    return res.status(400).json({ success: false, error: 'Missing required fields' });
-  }
-
-  const accessCode = generateCode();
-  const mailOptions = {
-    from: 'WakaTV <easywakatv@gmail.com>',
-    to: email,
-    subject: 'Your WakaTV Access Code',
-    html: `
-      <h2>Thanks for your purchase!</h2>
-      <p><strong>Amount Paid:</strong> R${amount}</p>
-      <p><strong>Your Access Code:</strong> <code>${accessCode}</code></p>
-      <p>Contact support@wakatv.co.za if you need help.</p>
-    `
-  };
-
-  transporter.sendMail(mailOptions, err => {
-    if (err) {
-      console.error(' Error sending email:', err);
-      return res.status(500).json({ success: false, error: 'Failed to send email' });
+app.post('/send-code', async (req, res) => {
+  try {
+    const { email, amount, reference } = req.body;
+    if (!email || !amount || !reference) {
+      return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
-    // Log to DB
-    db.run(
-      'INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)',
-      [email, amount, reference],
-      err => { if (err) console.error(' DB log error:', err); }
+
+    const code = generateCode();
+
+    await transporter.sendMail({
+      from: `"WakaTV" <${process.env.BREVO_SMTP_USER}>`,
+      to: email,
+      subject: 'Your WakaTV Access Code',
+      text: `Here is your code: ${code}`
+    });
+
+    await db.runAsync(
+      `INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)`,
+      [email, amount, reference]
     );
-    res.json({ success: true, message: 'Email sent', code: accessCode });
-  });
+
+    res.json({ success: true, message: 'Code sent' });
+  } catch (err) {
+    console.error('❌ /send-code error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
 
-// ----------------------------------------------------------------------------
-// 10. Admin API: load logs & codes, upload codes
-// ----------------------------------------------------------------------------
-// Returns JSON array of logs
-app.get('/admin/logs-data', isAdmin, (req, res) => {
-  db.all('SELECT * FROM logs ORDER BY id DESC', (err, rows) => {
-    if (err) {
-      console.error(' Error getting logs:', err);
-      return res.status(500).json({ success: false, error: 'Failed to load logs' });
-    }
+// ─── PROTECTED ADMIN ENDPOINTS ─────────────────────────────
+
+// 1) Fetch payment logs
+app.get('/admin/logs-data', isAdmin, async (req, res) => {
+  try {
+    const rows = await db.allAsync(`SELECT * FROM logs ORDER BY timestamp DESC`);
     res.json({ success: true, logs: rows });
-  });
+  } catch (err) {
+    console.error('❌ logs-data error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 });
 
-// Returns JSON array of available codes
-app.get('/admin/codes', isAdmin, (req, res) => {
-  db.all('SELECT * FROM codes ORDER BY id DESC', (err, rows) => {
-    if (err) {
-      console.error(' Error getting codes:', err);
-      return res.status(500).json({ success: false, error: 'Failed to load codes' });
-    }
+// 2) Fetch code inventory
+app.get('/admin/codes', isAdmin, async (req, res) => {
+  try {
+    const rows = await db.allAsync(`SELECT * FROM codes ORDER BY id`);
     res.json({ success: true, codes: rows });
-  });
-});
-
-// Accepts an array of codes to insert
-app.post('/admin/upload-codes', isAdmin, (req, res) => {
-  const { codes } = req.body;
-  if (!Array.isArray(codes)) {
-    return res.status(400).json({ success: false, error: 'Invalid codes format' });
+  } catch (err) {
+    console.error('❌ codes error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
-  const stmt = db.prepare('INSERT OR IGNORE INTO codes (code, used) VALUES (?, 0)');
-  codes.forEach(c => {
-    const code = c.trim();
-    if (code) stmt.run(code);
-  });
-  stmt.finalize();
-  res.json({ success: true, message: 'Codes uploaded successfully' });
 });
 
-// Optional raw-HTML view of logs for quick debug
-app.get('/admin/logs', isAdmin, (req, res) => {
-  db.all('SELECT * FROM logs ORDER BY timestamp DESC', (err, rows) => {
-    if (err) return res.status(500).send('Error fetching logs');
-    res.send(`<html><body><h2>Logs</h2><pre>${JSON.stringify(rows, null, 2)}</pre></body></html>`);
-  });
-});
+// 3) Bulk‐upload codes
+app.post('/admin/upload-codes', isAdmin, async (req, res) => {
+  try {
+    const { codes } = req.body;
+    if (!Array.isArray(codes) || !codes.length) {
+      return res.status(400).json({ success: false, message: 'No codes provided' });
+    }
 
-// ----------------------------------------------------------------------------
-// 11. Start the server
-// ----------------------------------------------------------------------------
-app.listen(PORT, '0.0.0.0', err => {
-  if (err) {
-    console.error(' Failed to start server:', err);
-  } else {
-    console.log(` Server running on port ${PORT}`);
+    await db.runAsync('BEGIN TRANSACTION');
+    for (let code of codes) {
+      code = code.trim();
+      if (code) {
+        // ignore duplicates
+        await db.runAsync(
+          `INSERT OR IGNORE INTO codes (code) VALUES (?)`,
+          [code]
+        );
+      }
+    }
+    await db.runAsync('COMMIT');
+
+    res.json({ success: true, message: 'Codes uploaded' });
+  } catch (err) {
+    await db.runAsync('ROLLBACK').catch(()=>{});
+    console.error('❌ upload-codes error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
