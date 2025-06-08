@@ -1,5 +1,3 @@
-// 🔄 Updated 2025-06-09 to fix routing and cookie issues
-
 // server.js
 require('dotenv').config();
 
@@ -21,10 +19,7 @@ const ORIGINS = [
   'https://nimble-pudding-0824c3.netlify.app'
 ];
 
-// Trust proxy (for correct secure cookie behavior behind a proxy)
 app.set('trust proxy', 1);
-
-// ─── CORS ─────────────────────────────────────────────────────
 app.use(cors({
   origin: ORIGINS,
   credentials: true,
@@ -32,36 +27,28 @@ app.use(cors({
   allowedHeaders: ['Content-Type']
 }));
 app.options('*', cors());
-
-// ─── BODY PARSER ──────────────────────────────────────────────
 app.use(bodyParser.json());
-
-// ─── SESSIONS (SQLite) ───────────────────────────────────────
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: isProd,                   // HTTPS only in production
-    sameSite: isProd ? 'none' : 'lax',// cross-site in production
-    maxAge: 1000 * 60 * 60 * 2        // 2 hours
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 1000 * 60 * 60 * 2
   }
 }));
 
-// ─── AUTH CHECK ──────────────────────────────────────────────
 function isAdmin(req, res, next) {
-  console.log('[isAdmin] session:', req.session);
   if (req.session && req.session.admin) return next();
   res.status(403).json({ success: false, message: 'Unauthorized' });
 }
 
-// ─── HEALTHCHECK ─────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.send('🎉 WakaTV backend is running');
 });
 
-// ─── ADMIN LOGIN / LOGOUT ────────────────────────────────────
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -77,7 +64,6 @@ app.post('/admin/login', (req, res) => {
 app.get('/admin/logout', (req, res) => {
   req.session.destroy(err => {
     if (err) {
-      console.error('[logout] error:', err);
       return res.status(500).json({ success: false, message: 'Logout failed' });
     }
     res.clearCookie('connect.sid');
@@ -85,7 +71,6 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// ─── EMAIL & CODE GENERATION ─────────────────────────────────
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -128,36 +113,28 @@ app.post('/send-code', async (req, res) => {
 
     res.json({ success: true, message: 'Code sent' });
   } catch (err) {
-    console.error('❌ /send-code error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// ─── PROTECTED ADMIN ROUTES ─────────────────────────────────
-
-// 1) Fetch payment logs
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   try {
     const rows = await db.allAsync(`SELECT * FROM logs ORDER BY timestamp DESC`);
     res.json({ success: true, logs: rows });
   } catch (err) {
-    console.error('❌ logs-data error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// 2) Fetch code inventory
 app.get('/admin/codes', isAdmin, async (req, res) => {
   try {
     const rows = await db.allAsync(`SELECT * FROM codes ORDER BY id`);
     res.json({ success: true, codes: rows });
   } catch (err) {
-    console.error('❌ codes error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// 3) Bulk-upload codes
 app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   try {
     const { codes } = req.body;
@@ -180,12 +157,10 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
     res.json({ success: true, message: 'Codes uploaded' });
   } catch (err) {
     await db.runAsync('ROLLBACK').catch(() => {});
-    console.error('❌ upload-codes error:', err);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
-// ─── START SERVER ───────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
