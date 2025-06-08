@@ -1,3 +1,5 @@
+// 🔄 Updated 2025-06-09 to fix routing and cookie issues
+
 // server.js
 require('dotenv').config();
 
@@ -13,14 +15,16 @@ const db            = require('./db');
 const app    = express();
 const PORT   = process.env.PORT || 10000;
 const isProd = process.env.NODE_ENV === 'production';
+
 const ORIGINS = [
   'http://localhost:5500',
   'https://nimble-pudding-0824c3.netlify.app'
 ];
 
-// Ensure no full-URL routes are used (only paths)
+// Trust proxy (for correct secure cookie behavior behind a proxy)
 app.set('trust proxy', 1);
 
+// ─── CORS ─────────────────────────────────────────────────────
 app.use(cors({
   origin: ORIGINS,
   credentials: true,
@@ -29,31 +33,35 @@ app.use(cors({
 }));
 app.options('*', cors());
 
+// ─── BODY PARSER ──────────────────────────────────────────────
 app.use(bodyParser.json());
+
+// ─── SESSIONS (SQLite) ───────────────────────────────────────
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
   secret: process.env.SESSION_SECRET || 'supersecretkey',
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 2
+    secure: isProd,                   // HTTPS only in production
+    sameSite: isProd ? 'none' : 'lax',// cross-site in production
+    maxAge: 1000 * 60 * 60 * 2        // 2 hours
   }
 }));
 
+// ─── AUTH CHECK ──────────────────────────────────────────────
 function isAdmin(req, res, next) {
   console.log('[isAdmin] session:', req.session);
   if (req.session && req.session.admin) return next();
   res.status(403).json({ success: false, message: 'Unauthorized' });
 }
 
-// Healthcheck (root path only)
+// ─── HEALTHCHECK ─────────────────────────────────────────────
 app.get('/', (req, res) => {
   res.send('🎉 WakaTV backend is running');
 });
 
-// Admin login (path-only)
+// ─── ADMIN LOGIN / LOGOUT ────────────────────────────────────
 app.post('/admin/login', (req, res) => {
   const { username, password } = req.body;
   if (
@@ -66,7 +74,6 @@ app.post('/admin/login', (req, res) => {
   res.status(401).json({ success: false, message: 'Invalid credentials' });
 });
 
-// Admin logout
 app.get('/admin/logout', (req, res) => {
   req.session.destroy(err => {
     if (err) {
@@ -78,7 +85,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// Email & code generation endpoint
+// ─── EMAIL & CODE GENERATION ─────────────────────────────────
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -126,7 +133,8 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// ─── PROTECTED ADMIN ENDPOINTS ─────────────────────────────
+// ─── PROTECTED ADMIN ROUTES ─────────────────────────────────
+
 // 1) Fetch payment logs
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   try {
@@ -177,6 +185,7 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   }
 });
 
+// ─── START SERVER ───────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
