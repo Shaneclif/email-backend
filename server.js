@@ -1,7 +1,7 @@
 // server.js
 require('dotenv').config();
 
-// ENV DEBUG LOGGING (optional, you can remove after setup)
+// ENV DEBUG LOGGING (optional)
 console.log('BREVO_SMTP_USER:', process.env.BREVO_SMTP_USER);
 console.log('BREVO_SMTP_PASS:', process.env.BREVO_SMTP_PASS ? '[HIDDEN]' : '[MISSING]');
 
@@ -22,6 +22,9 @@ const ORIGINS = [
   'http://localhost:5500',
   'https://easystreamzy.com'
 ];
+
+// Use your authenticated sender domain here
+const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
 
 app.set('trust proxy', 1);
 app.use(cors({
@@ -75,9 +78,6 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// --- USE YOUR AUTHENTICATED DOMAIN HERE ---
-const SENDER_ADDRESS = 'no-reply@easystreamzy.com'; // <-- Update this to your verified Brevo sender!
-
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -88,16 +88,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-function generateCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
-// --- UPDATED /send-code ENDPOINT ---
+// --- USE UPLOADED CODES, MARK AS USED, SEND TO CUSTOMER ---
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference } = req.body;
@@ -108,13 +99,18 @@ app.post('/send-code', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
 
-    const code = generateCode();
-    console.log('[SEND-CODE] Sending to:', email, '| Code:', code);
+    // 1. Get the first unused code
+    const codeRow = await db.getAsync('SELECT * FROM codes WHERE used = 0 LIMIT 1');
+    if (!codeRow) {
+      console.log('[SEND-CODE] No unused codes left!');
+      return res.status(400).json({ success: false, message: 'No codes available. Please contact support.' });
+    }
+    const code = codeRow.code;
 
-    // Send mail using your custom sender address!
+    // 2. Send mail using your custom sender address!
     try {
       const info = await transporter.sendMail({
-        from: `"WakaTV" <${SENDER_ADDRESS}>`,   // <-- Branded sender
+        from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,   // Branded sender
         to: email,
         subject: 'Your WakaTV Access Code',
         text: `Here is your code: ${code}`
@@ -125,8 +121,15 @@ app.post('/send-code', async (req, res) => {
       return res.status(500).json({ success: false, message: 'Email sending failed', error: mailErr.toString() });
     }
 
+    // 3. Mark the code as used
     await db.runAsync(
-      `INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)`,
+      'UPDATE codes SET used = 1, usedBy = ?, usedAt = CURRENT_TIMESTAMP WHERE id = ?',
+      [email, codeRow.id]
+    );
+
+    // 4. Log the transaction
+    await db.runAsync(
+      'INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)',
       [email, amount, reference]
     );
     console.log('[SEND-CODE] Log entry created for:', email);
@@ -138,6 +141,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
+// --- ADMIN ROUTES ---
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   try {
     const rows = await db.allAsync(`SELECT * FROM logs ORDER BY timestamp DESC`);
