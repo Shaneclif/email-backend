@@ -271,13 +271,25 @@ app.get('/api/my-referrals', async (req, res) => {
   const user = await User.findOne({ email });
   if (!user) return res.status(404).json({ success: false, message: "Not found" });
 
+  // Use the improved nextRewardIn logic
+  const numReferred = user.referred.length;
+  const nextRewardIn = 5 - (numReferred % 5 || 5);
+
+  // Helpful log for debugging
+  console.log("[Referral lookup]", email, {
+    referralCode: user.referralCode,
+    numReferred,
+    codesEarned: user.codesEarned || 0,
+    nextRewardIn
+  });
+
   res.json({
     success: true,
     referralCode: user.referralCode,
     referred: user.referred,
-    numReferred: user.referred.length,
+    numReferred: numReferred,
     codesEarned: user.codesEarned || 0,
-    nextRewardIn: 5 - (user.referred.length % 5 === 0 ? 5 : user.referred.length % 5)
+    nextRewardIn: nextRewardIn
   });
 });
 
