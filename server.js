@@ -1,10 +1,7 @@
-// server.js
-
 require('dotenv').config();
 
 const mongoose = require('mongoose');
 mongoose.connect(process.env.MONGO_URI, {
-  // useNewUrlParser and useUnifiedTopology are now default, but can remain for compatibility
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
@@ -33,7 +30,6 @@ const ORIGINS = [
 ];
 
 // --- MongoDB Models ---
-// Codes and Logs stay the same
 const codeSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   used: { type: Boolean, default: false },
@@ -49,7 +45,7 @@ const logSchema = new mongoose.Schema({
 const Code = mongoose.model('Code', codeSchema);
 const Log = mongoose.model('Log', logSchema);
 
-// --- NEW: User model for referrals ---
+// --- User model for referrals ---
 const userSchema = new mongoose.Schema({
   email: { type: String, unique: true },
   referralCode: { type: String, unique: true },
@@ -58,7 +54,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// Use your authenticated sender domain here
 const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
 
 app.set('trust proxy', 1);
@@ -135,7 +130,7 @@ app.post('/send-code', async (req, res) => {
     // 0. If this user is new, create a User with a unique referral code
     let user = await User.findOne({ email });
     if (!user) {
-      // create unique code (could use MongoDB _id, here using random for clarity)
+      // create unique code
       const makeCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
       let newCode = makeCode();
       // Ensure code is unique
@@ -155,13 +150,22 @@ app.post('/send-code', async (req, res) => {
     }
     const code = codeDoc.code;
 
-    // 2. Send mail using your custom sender address!
+    // 2. Send mail including their unique referral link!
+    const frontendBase = process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com';
     try {
       await transporter.sendMail({
-        from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,   // Branded sender
+        from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
         to: email,
-        subject: 'Your WakaTV Access Code',
-        text: `Here is your code: ${code}`
+        subject: 'Your EasyStreamzy Access Code',
+        text: `Here is your access code: ${code}
+
+Share and earn! 🎁
+For every 5 people who purchase using your unique link below, you get a free code:
+
+${frontendBase}/?ref=${user.referralCode}
+
+Track your progress anytime: ${frontendBase} (click "Referral Program – Track Your Progress" on the homepage)
+`
       });
     } catch (mailErr) {
       // If sending fails, make the code available again
@@ -173,7 +177,6 @@ app.post('/send-code', async (req, res) => {
     await Log.create({ email, amount, reference });
 
     // 4. --- Referral Logic ---
-    // If this purchase was with a referral code, record referral and auto-reward every 5
     if (referralCode) {
       // Don't let users refer themselves
       if (user.referralCode !== referralCode) {
@@ -183,7 +186,6 @@ app.post('/send-code', async (req, res) => {
 
           // Every 5 new referrals, reward with a free code!
           if (referrer.referred.length % 5 === 0) {
-            // Find a free code for the referrer
             const bonusCodeDoc = await Code.findOneAndUpdate(
               { used: false },
               { used: true, usedBy: referrer.email, usedAt: new Date() },
@@ -194,7 +196,11 @@ app.post('/send-code', async (req, res) => {
                 from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
                 to: referrer.email,
                 subject: 'Your Free WakaTV Access Code!',
-                text: `Thanks for referring 5 people! Here is your free access code: ${bonusCodeDoc.code}`
+                text: `Thanks for referring 5 people! Here is your free access code: ${bonusCodeDoc.code}
+
+Your unique referral link (keep sharing to earn more!): 
+${frontendBase}/?ref=${referrer.referralCode}
+`
               });
               referrer.codesEarned = (referrer.codesEarned || 0) + 1;
             }
@@ -257,7 +263,7 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   }
 });
 
-// --- NEW: Referral progress API endpoint ---
+// --- Referral progress API endpoint ---
 app.get('/api/my-referrals', async (req, res) => {
   const { email } = req.query;
   if (!email) return res.status(400).json({ success: false, message: "Email required" });
