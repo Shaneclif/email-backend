@@ -1,6 +1,10 @@
 // server.js
 require('dotenv').config();
 
+// ENV DEBUG LOGGING
+console.log('BREVO_SMTP_USER:', process.env.BREVO_SMTP_USER);
+console.log('BREVO_SMTP_PASS:', process.env.BREVO_SMTP_PASS ? '[HIDDEN]' : '[MISSING]');
+
 const express       = require('express');
 const session       = require('express-session');
 const SQLiteStore   = require('connect-sqlite3')(session);
@@ -90,30 +94,44 @@ function generateCode() {
   return code;
 }
 
+// --- UPDATED /send-code ENDPOINT WITH LOGGING AND ERRORS ---
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference } = req.body;
+    console.log('[SEND-CODE] Payload:', req.body);
+
     if (!email || !amount || !reference) {
+      console.log('[SEND-CODE] Missing parameters');
       return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
 
     const code = generateCode();
+    console.log('[SEND-CODE] Sending to:', email, '| Code:', code);
 
-    await transporter.sendMail({
-      from: `"WakaTV" <${process.env.BREVO_SMTP_USER}>`,
-      to: email,
-      subject: 'Your WakaTV Access Code',
-      text: `Here is your code: ${code}`
-    });
+    // Send mail with error diagnostics
+    try {
+      const info = await transporter.sendMail({
+        from: `"WakaTV" <${process.env.BREVO_SMTP_USER}>`,
+        to: email,
+        subject: 'Your WakaTV Access Code',
+        text: `Here is your code: ${code}`
+      });
+      console.log('[SEND-CODE] Email sent:', info.messageId || info.response || info);
+    } catch (mailErr) {
+      console.error('[SEND-CODE] Email error:', mailErr);
+      return res.status(500).json({ success: false, message: 'Email sending failed', error: mailErr.toString() });
+    }
 
     await db.runAsync(
       `INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)`,
       [email, amount, reference]
     );
+    console.log('[SEND-CODE] Log entry created for:', email);
 
     res.json({ success: true, message: 'Code sent' });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error('[SEND-CODE] Fatal error:', err);
+    res.status(500).json({ success: false, message: 'Server error', error: err.toString() });
   }
 });
 
