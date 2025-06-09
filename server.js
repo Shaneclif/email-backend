@@ -1,7 +1,7 @@
 // server.js
 require('dotenv').config();
 
-// ENV DEBUG LOGGING
+// ENV DEBUG LOGGING (optional, you can remove after setup)
 console.log('BREVO_SMTP_USER:', process.env.BREVO_SMTP_USER);
 console.log('BREVO_SMTP_PASS:', process.env.BREVO_SMTP_PASS ? '[HIDDEN]' : '[MISSING]');
 
@@ -20,7 +20,7 @@ const isProd = process.env.NODE_ENV === 'production';
 
 const ORIGINS = [
   'http://localhost:5500',
-  'https://nimble-pudding-0824c3.netlify.app'
+  'https://easystreamzy.com'
 ];
 
 app.set('trust proxy', 1);
@@ -75,6 +75,9 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
+// --- USE YOUR AUTHENTICATED DOMAIN HERE ---
+const SENDER_ADDRESS = 'no-reply@easystreamzy.com'; // <-- Update this to your verified Brevo sender!
+
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -94,7 +97,7 @@ function generateCode() {
   return code;
 }
 
-// --- UPDATED /send-code ENDPOINT WITH LOGGING AND ERRORS ---
+// --- UPDATED /send-code ENDPOINT ---
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference } = req.body;
@@ -108,10 +111,10 @@ app.post('/send-code', async (req, res) => {
     const code = generateCode();
     console.log('[SEND-CODE] Sending to:', email, '| Code:', code);
 
-    // Send mail with error diagnostics
+    // Send mail using your custom sender address!
     try {
       const info = await transporter.sendMail({
-        from: `"WakaTV" <${process.env.BREVO_SMTP_USER}>`,
+        from: `"WakaTV" <${SENDER_ADDRESS}>`,   // <-- Branded sender
         to: email,
         subject: 'Your WakaTV Access Code',
         text: `Here is your code: ${code}`
