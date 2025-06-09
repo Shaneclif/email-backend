@@ -127,10 +127,13 @@ app.post('/send-code', async (req, res) => {
       [email, codeRow.id]
     );
 
-    // 4. Log the transaction
+    // --- FIXED: Divide amount by 100 before saving log ---
+    const displayAmount = amount / 100;
+
+    // 4. Log the transaction (fixed)
     await db.runAsync(
       'INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)',
-      [email, amount, reference]
+      [email, displayAmount, reference]  // Use displayAmount here
     );
     console.log('[SEND-CODE] Log entry created for:', email);
 
@@ -188,4 +191,4 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(` Server listening on port ${PORT}`);
-}); 
+});
