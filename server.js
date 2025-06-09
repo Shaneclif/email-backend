@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const mongoose = require('mongoose');
 mongoose.connect(process.env.MONGO_URI, {
+  // useNewUrlParser and useUnifiedTopology are now default, but can remain for compatibility
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
@@ -32,22 +33,30 @@ const ORIGINS = [
 ];
 
 // --- MongoDB Models ---
+// Codes and Logs stay the same
 const codeSchema = new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   used: { type: Boolean, default: false },
   usedBy: { type: String, default: null },
   usedAt: { type: Date, default: null }
 });
-
 const logSchema = new mongoose.Schema({
   email: String,
   amount: Number,
   reference: String,
   timestamp: { type: Date, default: Date.now }
 });
-
 const Code = mongoose.model('Code', codeSchema);
 const Log = mongoose.model('Log', logSchema);
+
+// --- NEW: User model for referrals ---
+const userSchema = new mongoose.Schema({
+  email: { type: String, unique: true },
+  referralCode: { type: String, unique: true },
+  referred: [String], // emails of people referred
+  codesEarned: { type: Number, default: 0 }
+});
+const User = mongoose.model('User', userSchema);
 
 // Use your authenticated sender domain here
 const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
@@ -115,11 +124,23 @@ const transporter = nodemailer.createTransport({
 });
 
 // --- USE UPLOADED CODES, MARK AS USED, SEND TO CUSTOMER ---
+// --- REFERRAL LOGIC: create or update User, track referral, reward every 5 referrals ---
 app.post('/send-code', async (req, res) => {
   try {
-    const { email, amount, reference } = req.body;
+    const { email, amount, reference, referralCode } = req.body;
     if (!email || !amount || !reference) {
       return res.status(400).json({ success: false, message: 'Missing parameters' });
+    }
+
+    // 0. If this user is new, create a User with a unique referral code
+    let user = await User.findOne({ email });
+    if (!user) {
+      // create unique code (could use MongoDB _id, here using random for clarity)
+      const makeCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
+      let newCode = makeCode();
+      // Ensure code is unique
+      while (await User.findOne({ referralCode: newCode })) newCode = makeCode();
+      user = await User.create({ email, referralCode: newCode, referred: [], codesEarned: 0 });
     }
 
     // 1. Get the first unused code and mark as used
@@ -136,7 +157,7 @@ app.post('/send-code', async (req, res) => {
 
     // 2. Send mail using your custom sender address!
     try {
-      const info = await transporter.sendMail({
+      await transporter.sendMail({
         from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,   // Branded sender
         to: email,
         subject: 'Your WakaTV Access Code',
@@ -151,7 +172,39 @@ app.post('/send-code', async (req, res) => {
     // 3. Log the transaction
     await Log.create({ email, amount, reference });
 
-    res.json({ success: true, message: 'Code sent' });
+    // 4. --- Referral Logic ---
+    // If this purchase was with a referral code, record referral and auto-reward every 5
+    if (referralCode) {
+      // Don't let users refer themselves
+      if (user.referralCode !== referralCode) {
+        const referrer = await User.findOne({ referralCode });
+        if (referrer && !referrer.referred.includes(email)) {
+          referrer.referred.push(email);
+
+          // Every 5 new referrals, reward with a free code!
+          if (referrer.referred.length % 5 === 0) {
+            // Find a free code for the referrer
+            const bonusCodeDoc = await Code.findOneAndUpdate(
+              { used: false },
+              { used: true, usedBy: referrer.email, usedAt: new Date() },
+              { new: true }
+            );
+            if (bonusCodeDoc) {
+              await transporter.sendMail({
+                from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
+                to: referrer.email,
+                subject: 'Your Free WakaTV Access Code!',
+                text: `Thanks for referring 5 people! Here is your free access code: ${bonusCodeDoc.code}`
+              });
+              referrer.codesEarned = (referrer.codesEarned || 0) + 1;
+            }
+          }
+          await referrer.save();
+        }
+      }
+    }
+
+    res.json({ success: true, message: 'Code sent', referralCode: user.referralCode });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error', error: err.toString() });
   }
@@ -202,6 +255,24 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
+});
+
+// --- NEW: Referral progress API endpoint ---
+app.get('/api/my-referrals', async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).json({ success: false, message: "Email required" });
+
+  const user = await User.findOne({ email });
+  if (!user) return res.status(404).json({ success: false, message: "Not found" });
+
+  res.json({
+    success: true,
+    referralCode: user.referralCode,
+    referred: user.referred,
+    numReferred: user.referred.length,
+    codesEarned: user.codesEarned || 0,
+    nextRewardIn: 5 - (user.referred.length % 5 === 0 ? 5 : user.referred.length % 5)
+  });
 });
 
 app.listen(PORT, () => {
