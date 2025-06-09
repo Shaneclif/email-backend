@@ -1,5 +1,14 @@
 // server.js
+
 require('dotenv').config();
+
+const mongoose = require('mongoose');
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log('✅ MongoDB Connected!'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
 
 // ENV DEBUG LOGGING (optional)
 console.log('BREVO_SMTP_USER:', process.env.BREVO_SMTP_USER);
@@ -12,7 +21,6 @@ const nodemailer    = require('nodemailer');
 const cors          = require('cors');
 const bodyParser    = require('body-parser');
 const path          = require('path');
-const db            = require('./db');
 
 const app    = express();
 const PORT   = process.env.PORT || 10000;
@@ -22,6 +30,24 @@ const ORIGINS = [
   'http://localhost:5500',
   'https://easystreamzy.com'
 ];
+
+// --- MongoDB Models ---
+const codeSchema = new mongoose.Schema({
+  code: { type: String, required: true, unique: true },
+  used: { type: Boolean, default: false },
+  usedBy: { type: String, default: null },
+  usedAt: { type: Date, default: null }
+});
+
+const logSchema = new mongoose.Schema({
+  email: String,
+  amount: Number,
+  reference: String,
+  timestamp: { type: Date, default: Date.now }
+});
+
+const Code = mongoose.model('Code', codeSchema);
+const Log = mongoose.model('Log', logSchema);
 
 // Use your authenticated sender domain here
 const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
@@ -92,20 +118,21 @@ const transporter = nodemailer.createTransport({
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference } = req.body;
-    console.log('[SEND-CODE] Payload:', req.body);
-
     if (!email || !amount || !reference) {
-      console.log('[SEND-CODE] Missing parameters');
       return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
 
-    // 1. Get the first unused code
-    const codeRow = await db.getAsync('SELECT * FROM codes WHERE used = 0 LIMIT 1');
-    if (!codeRow) {
-      console.log('[SEND-CODE] No unused codes left!');
+    // 1. Get the first unused code and mark as used
+    const codeDoc = await Code.findOneAndUpdate(
+      { used: false },
+      { used: true, usedBy: email, usedAt: new Date() },
+      { new: true }
+    );
+
+    if (!codeDoc) {
       return res.status(400).json({ success: false, message: 'No codes available. Please contact support.' });
     }
-    const code = codeRow.code;
+    const code = codeDoc.code;
 
     // 2. Send mail using your custom sender address!
     try {
@@ -115,28 +142,17 @@ app.post('/send-code', async (req, res) => {
         subject: 'Your WakaTV Access Code',
         text: `Here is your code: ${code}`
       });
-      console.log('[SEND-CODE] Email sent:', info.messageId || info.response || info);
     } catch (mailErr) {
-      console.error('[SEND-CODE] Email error:', mailErr);
+      // If sending fails, make the code available again
+      await Code.findByIdAndUpdate(codeDoc._id, { used: false, usedBy: null, usedAt: null });
       return res.status(500).json({ success: false, message: 'Email sending failed', error: mailErr.toString() });
     }
 
-    // 3. Mark the code as used
-    await db.runAsync(
-      'UPDATE codes SET used = 1, usedBy = ?, usedAt = CURRENT_TIMESTAMP WHERE id = ?',
-      [email, codeRow.id]
-    );
-
-    // 4. Log the transaction (NO division)
-    await db.runAsync(
-      'INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)',
-      [email, amount, reference]
-    );
-    console.log('[SEND-CODE] Log entry created for:', email);
+    // 3. Log the transaction
+    await Log.create({ email, amount, reference });
 
     res.json({ success: true, message: 'Code sent' });
   } catch (err) {
-    console.error('[SEND-CODE] Fatal error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.toString() });
   }
 });
@@ -144,8 +160,8 @@ app.post('/send-code', async (req, res) => {
 // --- ADMIN ROUTES ---
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   try {
-    const rows = await db.allAsync(`SELECT * FROM logs ORDER BY timestamp DESC`);
-    res.json({ success: true, logs: rows });
+    const logs = await Log.find().sort({ timestamp: -1 });
+    res.json({ success: true, logs });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -153,8 +169,8 @@ app.get('/admin/logs-data', isAdmin, async (req, res) => {
 
 app.get('/admin/codes', isAdmin, async (req, res) => {
   try {
-    const rows = await db.allAsync(`SELECT * FROM codes ORDER BY id`);
-    res.json({ success: true, codes: rows });
+    const codes = await Code.find().sort({ _id: 1 });
+    res.json({ success: true, codes });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
@@ -167,21 +183,23 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
       return res.status(400).json({ success: false, message: 'No codes provided' });
     }
 
-    await db.runAsync('BEGIN TRANSACTION');
-    for (let code of codes) {
-      code = code.trim();
-      if (code) {
-        await db.runAsync(
-          `INSERT OR IGNORE INTO codes (code) VALUES (?)`,
-          [code]
-        );
-      }
+    const bulkOps = codes
+      .map(code => code.trim())
+      .filter(Boolean)
+      .map(code => ({
+        updateOne: {
+          filter: { code },
+          update: { $setOnInsert: { code } },
+          upsert: true
+        }
+      }));
+    if (bulkOps.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid codes' });
     }
-    await db.runAsync('COMMIT');
 
+    await Code.bulkWrite(bulkOps);
     res.json({ success: true, message: 'Codes uploaded' });
   } catch (err) {
-    await db.runAsync('ROLLBACK').catch(() => {});
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
