@@ -127,13 +127,10 @@ app.post('/send-code', async (req, res) => {
       [email, codeRow.id]
     );
 
-    // --- FIXED: Divide amount by 100 before saving log ---
-    const displayAmount = amount / 100;
-
-    // 4. Log the transaction (fixed)
+    // 4. Log the transaction (NO division)
     await db.runAsync(
       'INSERT INTO logs (email, amount, reference) VALUES (?, ?, ?)',
-      [email, displayAmount, reference]  // Use displayAmount here
+      [email, amount, reference]
     );
     console.log('[SEND-CODE] Log entry created for:', email);
 
