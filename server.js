@@ -118,47 +118,46 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// --- USE UPLOADED CODES, MARK AS USED, SEND TO CUSTOMER ---
-// --- REFERRAL LOGIC: create or update User, track referral, reward every 5 referrals ---
+// --- UPDATED SEND-CODE LOGIC: send X codes per "month" purchased ---
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
     if (!email || !amount || !reference) {
       return res.status(400).json({ success: false, message: 'Missing parameters' });
     }
+    const codesToSend = parseInt(amount, 10); // How many codes to grant
 
     // 0. If this user is new, create a User with a unique referral code
     let user = await User.findOne({ email });
     if (!user) {
-      // create unique code
       const makeCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
       let newCode = makeCode();
-      // Ensure code is unique
       while (await User.findOne({ referralCode: newCode })) newCode = makeCode();
       user = await User.create({ email, referralCode: newCode, referred: [], codesEarned: 0 });
     }
 
-    // 1. Get the first unused code and mark as used
-    const codeDoc = await Code.findOneAndUpdate(
-      { used: false },
-      { used: true, usedBy: email, usedAt: new Date() },
-      { new: true }
-    );
-
-    if (!codeDoc) {
-      return res.status(400).json({ success: false, message: 'No codes available. Please contact support.' });
+    // 1. Get the first X unused codes and mark as used
+    const codeDocs = await Code.find({ used: false }).limit(codesToSend);
+    if (codeDocs.length < codesToSend) {
+      return res.status(400).json({ success: false, message: `Only ${codeDocs.length} codes available. Please contact support.` });
     }
-    const code = codeDoc.code;
 
-    // 2. Send mail including their unique referral link!
+    // Mark all codes as used
+    const usedCodeIds = [];
+    for (const doc of codeDocs) {
+      await Code.findByIdAndUpdate(doc._id, { used: true, usedBy: email, usedAt: new Date() });
+      usedCodeIds.push(doc.code);
+    }
+
+    // 2. Send mail including ALL their codes and their unique referral link!
+    const codesList = usedCodeIds.map((c, i) => `${i + 1}. ${c}`).join('\n');
     const frontendBase = process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com';
     try {
       await transporter.sendMail({
         from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
         to: email,
-        subject: 'Your EasyStreamzy Access Code',
-        text: `Here is your access code: ${code}
-
+        subject: 'Your EasyStreamzy Access Codes',
+        text: `Here are your access codes (${codesToSend}):\n\n${codesList}\n
 Share and earn! 🎁
 For every 5 people who purchase using your unique link below, you get a free code:
 
@@ -168,8 +167,10 @@ Track your progress anytime: ${frontendBase} (click "Referral Program – Track 
 `
       });
     } catch (mailErr) {
-      // If sending fails, make the code available again
-      await Code.findByIdAndUpdate(codeDoc._id, { used: false, usedBy: null, usedAt: null });
+      // If sending fails, make the codes available again
+      for (const doc of codeDocs) {
+        await Code.findByIdAndUpdate(doc._id, { used: false, usedBy: null, usedAt: null });
+      }
       return res.status(500).json({ success: false, message: 'Email sending failed', error: mailErr.toString() });
     }
 
@@ -178,13 +179,10 @@ Track your progress anytime: ${frontendBase} (click "Referral Program – Track 
 
     // 4. --- Referral Logic ---
     if (referralCode) {
-      // Don't let users refer themselves
       if (user.referralCode !== referralCode) {
         const referrer = await User.findOne({ referralCode });
         if (referrer && !referrer.referred.includes(email)) {
           referrer.referred.push(email);
-
-          // Every 5 new referrals, reward with a free code!
           if (referrer.referred.length % 5 === 0) {
             const bonusCodeDoc = await Code.findOneAndUpdate(
               { used: false },
@@ -210,7 +208,7 @@ ${frontendBase}/?ref=${referrer.referralCode}
       }
     }
 
-    res.json({ success: true, message: 'Code sent', referralCode: user.referralCode });
+    res.json({ success: true, message: `Codes sent (${codesToSend})`, referralCode: user.referralCode });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error', error: err.toString() });
   }
@@ -271,11 +269,9 @@ app.get('/api/my-referrals', async (req, res) => {
   const user = await User.findOne({ email });
   if (!user) return res.status(404).json({ success: false, message: "Not found" });
 
-  // Use the improved nextRewardIn logic
   const numReferred = user.referred.length;
   const nextRewardIn = 5 - (numReferred % 5 || 5);
 
-  // Helpful log for debugging
   console.log("[Referral lookup]", email, {
     referralCode: user.referralCode,
     numReferred,
