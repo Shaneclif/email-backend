@@ -42,17 +42,23 @@ const logSchema = new mongoose.Schema({
   reference: String,
   timestamp: { type: Date, default: Date.now }
 });
-const Code = mongoose.model('Code', codeSchema);
-const Log = mongoose.model('Log', logSchema);
-
-// --- User model for referrals ---
 const userSchema = new mongoose.Schema({
   email: { type: String, unique: true },
   referralCode: { type: String, unique: true },
   referred: [String], // emails of people referred
   codesEarned: { type: Number, default: 0 }
 });
+const Code = mongoose.model('Code', codeSchema);
+const Log = mongoose.model('Log', logSchema);
 const User = mongoose.model('User', userSchema);
+
+// --- Visit schema & model (for logging each visitor) ---
+const visitSchema = new mongoose.Schema({
+  ip:        { type: String },
+  userAgent: { type: String },
+  timestamp: { type: Date, default: Date.now }
+});
+const Visit = mongoose.model('Visit', visitSchema);
 
 const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
 
@@ -76,6 +82,21 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 2
   }
 }));
+
+// --- Log every GET request as a Visit document ---
+app.use(async (req, res, next) => {
+  if (req.method === 'GET') {
+    try {
+      await Visit.create({
+        ip:        req.ip,
+        userAgent: req.get('User-Agent')
+      });
+    } catch (e) {
+      console.error('Visit log failed:', e);
+    }
+  }
+  next();
+});
 
 function isAdmin(req, res, next) {
   if (req.session && req.session.admin) return next();
@@ -256,6 +277,19 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
 
     await Code.bulkWrite(bulkOps);
     res.json({ success: true, message: 'Codes uploaded' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// --- Admin route to fetch last 100 visits ---
+app.get('/admin/visits', isAdmin, async (req, res) => {
+  try {
+    const visits = await Visit
+      .find()
+      .sort({ timestamp: -1 })
+      .limit(100);
+    res.json({ success: true, visits });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error' });
   }
