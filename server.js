@@ -282,6 +282,20 @@ app.post('/admin/upload-codes', isAdmin, async (req, res) => {
   }
 });
 
+// --- BULK DELETE CODES (NEW) ---
+app.post('/admin/delete-codes', isAdmin, async (req, res) => {
+  try {
+    const { ids } = req.body; // expects: { ids: [array of code IDs] }
+    if (!Array.isArray(ids) || !ids.length) {
+      return res.json({ success: false, message: "No IDs provided" });
+    }
+    await Code.deleteMany({ _id: { $in: ids } });
+    res.json({ success: true, message: "Selected codes deleted." });
+  } catch (err) {
+    res.json({ success: false, message: "Delete failed." });
+  }
+});
+
 // --- Admin route to fetch last 100 visits ---
 app.get('/admin/visits', isAdmin, async (req, res) => {
   try {
