@@ -1,4 +1,5 @@
- require('dotenv').config();
+// server.js - Fully updated for PayFast + code emailing
+require('dotenv').config();
 
 const mongoose = require('mongoose');
 const express = require('express');
@@ -18,7 +19,7 @@ const isProd = process.env.NODE_ENV === 'production';
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
-}).then(() => console.log('✅ MongoDB Connected!'))
+}).then(() => console.log('✅ MongoDB Connected'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
 
 const ORIGINS = [
@@ -26,85 +27,76 @@ const ORIGINS = [
   'https://easystreamzy.com'
 ];
 
-// MongoDB Schemas
-const codeSchema = new mongoose.Schema({
+// Schemas
+const Code = mongoose.model('Code', new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   used: { type: Boolean, default: false },
-  usedBy: { type: String, default: null },
-  usedAt: { type: Date, default: null }
-});
-const logSchema = new mongoose.Schema({
+  usedBy: String,
+  usedAt: Date
+}));
+
+const Log = mongoose.model('Log', new mongoose.Schema({
   email: String,
   amount: Number,
   reference: String,
   timestamp: { type: Date, default: Date.now }
-});
-const userSchema = new mongoose.Schema({
+}));
+
+const User = mongoose.model('User', new mongoose.Schema({
   email: { type: String, unique: true },
   referralCode: { type: String, unique: true },
   referred: [String],
-  codesEarned: { type: Number, default: 0 }
-});
-const visitSchema = new mongoose.Schema({
+  codesEarned: Number
+}));
+
+const Visit = mongoose.model('Visit', new mongoose.Schema({
   ip: String,
   userAgent: String,
   timestamp: { type: Date, default: Date.now }
-});
+}));
 
-const Code = mongoose.model('Code', codeSchema);
-const Log = mongoose.model('Log', logSchema);
-const User = mongoose.model('User', userSchema);
-const Visit = mongoose.model('Visit', visitSchema);
-
-const SENDER_ADDRESS = 'no-reply@easystreamzy.com';
-
+// Middleware
 app.set('trust proxy', 1);
 app.use(cors({ origin: ORIGINS, credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
-  secret: process.env.SESSION_SECRET || 'supersecretkey',
+  secret: process.env.SESSION_SECRET || 'secret',
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    maxAge: 1000 * 60 * 60 * 2
-  }
+  cookie: { secure: isProd, sameSite: isProd ? 'none' : 'lax', maxAge: 7200000 }
 }));
 
-app.use(async (req, res, next) => {
-  if (req.method === 'GET') {
-    try {
-      await Visit.create({ ip: req.ip, userAgent: req.get('User-Agent') });
-    } catch (e) { console.error('Visit log failed:', e); }
-  }
-  next();
-});
-
-function isAdmin(req, res, next) {
-  if (req.session && req.session.admin) return next();
-  res.status(403).json({ success: false, message: 'Unauthorized' });
-}
-
+// Brevo (SMTP)
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
-  secure: false,
   auth: {
     user: process.env.BREVO_SMTP_USER,
     pass: process.env.BREVO_SMTP_PASS
   }
 });
 
-app.get('/', (req, res) => {
-  res.send('🎉 EasyStreamzy backend is running');
+// Visitor logs
+app.use(async (req, res, next) => {
+  if (req.method === 'GET') {
+    try {
+      await Visit.create({ ip: req.ip, userAgent: req.get('User-Agent') });
+    } catch {}
+  }
+  next();
 });
 
+// Auth check
+function isAdmin(req, res, next) {
+  if (req.session.admin) return next();
+  res.status(403).json({ success: false });
+}
+
+// Admin login
 app.post('/admin/login', (req, res) => {
-  const { username, password } = req.body;
-  if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
+  if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
     return res.json({ success: true });
   }
@@ -112,44 +104,38 @@ app.post('/admin/login', (req, res) => {
 });
 
 app.get('/admin/logout', (req, res) => {
-  req.session.destroy(err => {
-    if (err) return res.status(500).json({ success: false });
+  req.session.destroy(() => {
     res.clearCookie('connect.sid');
     res.json({ success: true });
   });
 });
 
+// Send codes after payment
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
     if (!email || !amount || !reference) return res.status(400).json({ success: false });
 
-    const codesToSend = parseInt(amount, 10);
     let user = await User.findOne({ email });
     if (!user) {
-      const makeCode = () => Math.random().toString(36).substring(2, 10).toUpperCase();
-      let newCode = makeCode();
-      while (await User.findOne({ referralCode: newCode })) newCode = makeCode();
-      user = await User.create({ email, referralCode: newCode });
+      let newCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+      while (await User.findOne({ referralCode: newCode })) newCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+      user = await User.create({ email, referralCode: newCode, referred: [], codesEarned: 0 });
     }
 
-    const codeDocs = await Code.find({ used: false }).limit(codesToSend);
-    if (codeDocs.length < codesToSend) {
-      return res.status(400).json({ success: false, message: `Only ${codeDocs.length} codes available.` });
+    const codesToSend = await Code.find({ used: false }).limit(amount);
+    if (codesToSend.length < amount) return res.status(400).json({ success: false });
+
+    for (const code of codesToSend) {
+      await Code.findByIdAndUpdate(code._id, { used: true, usedBy: email, usedAt: new Date() });
     }
 
-    for (const doc of codeDocs) {
-      await Code.findByIdAndUpdate(doc._id, { used: true, usedBy: email, usedAt: new Date() });
-    }
-
-    const codeList = codeDocs.map((c, i) => `${i + 1}. ${c.code}`).join('\n');
-    const frontendBase = process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com';
-
+    const message = codesToSend.map((c, i) => `${i + 1}. ${c.code}`).join('\n');
     await transporter.sendMail({
-      from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
+      from: `EasyStreamzy <no-reply@easystreamzy.com>`,
       to: email,
       subject: 'Your EasyStreamzy Access Codes',
-      text: `Here are your access codes:\n\n${codeList}\n\nRefer others: ${frontendBase}/?ref=${user.referralCode}`
+      text: `Here are your codes:\n\n${message}\n\nRefer others: https://easystreamzy.com/?ref=${user.referralCode}`
     });
 
     await Log.create({ email, amount, reference });
@@ -159,19 +145,19 @@ app.post('/send-code', async (req, res) => {
       if (referrer && !referrer.referred.includes(email)) {
         referrer.referred.push(email);
         if (referrer.referred.length % 5 === 0) {
-          const bonusCode = await Code.findOneAndUpdate(
+          const bonus = await Code.findOneAndUpdate(
             { used: false },
             { used: true, usedBy: referrer.email, usedAt: new Date() },
             { new: true }
           );
-          if (bonusCode) {
+          if (bonus) {
             await transporter.sendMail({
-              from: `"EasyStreamzy" <${SENDER_ADDRESS}>`,
+              from: `EasyStreamzy <no-reply@easystreamzy.com>`,
               to: referrer.email,
-              subject: 'Your Free Code!',
-              text: `Here is your free code: ${bonusCode.code}`
+              subject: 'Free Bonus Code',
+              text: `Thanks for referring! Here is your bonus code: ${bonus.code}`
             });
-            referrer.codesEarned = (referrer.codesEarned || 0) + 1;
+            referrer.codesEarned += 1;
           }
         }
         await referrer.save();
@@ -180,14 +166,16 @@ app.post('/send-code', async (req, res) => {
 
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.toString() });
+    console.error('Send Code Error:', err);
+    res.status(500).json({ success: false });
   }
 });
 
+// PayFast IPN
 app.post('/payfast-ipn', async (req, res) => {
   try {
-    const rawBody = qs.stringify(req.body);
-    const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', rawBody, {
+    const raw = qs.stringify(req.body);
+    const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', raw, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
@@ -201,97 +189,44 @@ app.post('/payfast-ipn', async (req, res) => {
       const units = Math.floor(amount / 140);
 
       await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
-        email,
-        amount: units,
-        reference,
-        referralCode
-      }, {
-        headers: { 'Content-Type': 'application/json' }
+        email, amount: units, reference, referralCode
       });
-
-      return res.status(200).send('OK');
     }
 
-    res.status(200).send('Ignored');
+    res.status(200).send('OK');
   } catch (err) {
-    console.error('PayFast IPN Error:', err);
-    res.status(500).send('IPN Server Error');
+    console.error('IPN error:', err);
+    res.status(500).send('Error');
   }
 });
 
+// Admin routes: logs, codes, visits, uploads, delete
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
-  try {
-    const logs = await Log.find().sort({ timestamp: -1 });
-    res.json({ success: true, logs });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  const logs = await Log.find().sort({ timestamp: -1 });
+  res.json({ success: true, logs });
 });
 
 app.get('/admin/codes', isAdmin, async (req, res) => {
-  try {
-    const codes = await Code.find().sort({ _id: 1 });
-    res.json({ success: true, codes });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  const codes = await Code.find();
+  res.json({ success: true, codes });
 });
 
 app.post('/admin/upload-codes', isAdmin, async (req, res) => {
-  try {
-    const { codes } = req.body;
-    if (!Array.isArray(codes) || !codes.length) {
-      return res.status(400).json({ success: false });
-    }
-    const bulkOps = codes.map(code => ({
-      updateOne: {
-        filter: { code },
-        update: { $setOnInsert: { code } },
-        upsert: true
-      }
-    }));
-    await Code.bulkWrite(bulkOps);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  const { codes } = req.body;
+  if (!Array.isArray(codes)) return res.status(400).json({ success: false });
+  await Code.insertMany(codes.map(code => ({ code })), { ordered: false });
+  res.json({ success: true });
 });
 
 app.post('/admin/delete-codes', isAdmin, async (req, res) => {
-  try {
-    const { ids } = req.body;
-    await Code.deleteMany({ _id: { $in: ids } });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  const { ids } = req.body;
+  await Code.deleteMany({ _id: { $in: ids } });
+  res.json({ success: true });
 });
 
 app.get('/admin/visits', isAdmin, async (req, res) => {
-  try {
-    const visits = await Visit.find().sort({ timestamp: -1 }).limit(100);
-    res.json({ success: true, visits });
-  } catch (err) {
-    res.status(500).json({ success: false });
-  }
+  const visits = await Visit.find().sort({ timestamp: -1 }).limit(100);
+  res.json({ success: true, visits });
 });
 
-app.get('/api/my-referrals', async (req, res) => {
-  const { email } = req.query;
-  if (!email) return res.status(400).json({ success: false });
-  const user = await User.findOne({ email });
-  if (!user) return res.status(404).json({ success: false });
-  const nextRewardIn = 5 - (user.referred.length % 5 || 5);
-  res.json({
-    success: true,
-    referralCode: user.referralCode,
-    referred: user.referred,
-    numReferred: user.referred.length,
-    codesEarned: user.codesEarned || 0,
-    nextRewardIn
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
