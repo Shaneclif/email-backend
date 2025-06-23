@@ -1,4 +1,3 @@
-// server.js - Fully working backend with PayFast IPN, email code sending, and admin dashboard
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -46,7 +45,10 @@ const Visit = mongoose.model('Visit', new mongoose.Schema({
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors({ origin: ['http://localhost:5500', 'https://easystreamzy.com'], credentials: true }));
+app.use(cors({
+  origin: 'https://easystreamzy.com',
+  credentials: true
+}));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
@@ -54,7 +56,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, sameSite: 'lax', maxAge: 7200000 }
+  cookie: {
+    secure: true,
+    httpOnly: true,
+    sameSite: 'none',
+    maxAge: 7200000
+  }
 }));
 
 // Mail
@@ -67,6 +74,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Visitor tracking
 app.use(async (req, res, next) => {
   if (req.method === 'GET') {
     try {
@@ -76,11 +84,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// Auth middleware
 function isAdmin(req, res, next) {
   if (req.session.admin) return next();
   res.status(403).json({ success: false });
 }
 
+// Admin login/logout
 app.post('/admin/login', (req, res) => {
   if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
@@ -96,6 +106,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
+// Code email route
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
@@ -158,6 +169,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
+// PayFast IPN route
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     const raw = qs.stringify(req.body);
