@@ -1,4 +1,4 @@
-// server.js - Fully updated PayFast IPN + Code Delivery (Individual Account)
+// server.js - Fully working backend with PayFast IPN, email code sending, and admin dashboard
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -14,11 +14,7 @@ const qs = require('querystring');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.error('❌ MongoDB error:', err));
+mongoose.connect(process.env.MONGO_URI).then(() => console.log('✅ MongoDB connected')).catch(err => console.error('❌ MongoDB error:', err));
 
 // Models
 const Code = mongoose.model('Code', new mongoose.Schema({
@@ -50,10 +46,7 @@ const Visit = mongoose.model('Visit', new mongoose.Schema({
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors({
-  origin: ['http://localhost:5500', 'https://easystreamzy.com'],
-  credentials: true
-}));
+app.use(cors({ origin: ['http://localhost:5500', 'https://easystreamzy.com'], credentials: true }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
@@ -64,6 +57,7 @@ app.use(session({
   cookie: { secure: false, sameSite: 'lax', maxAge: 7200000 }
 }));
 
+// Mail
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -88,10 +82,7 @@ function isAdmin(req, res, next) {
 }
 
 app.post('/admin/login', (req, res) => {
-  if (
-    req.body.username === process.env.ADMIN_USERNAME &&
-    req.body.password === process.env.ADMIN_PASSWORD
-  ) {
+  if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
     return res.json({ success: true });
   }
@@ -167,7 +158,6 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// ✅ Correct IPN endpoint for "Buy Now" buttons (Individual PayFast account)
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     const raw = qs.stringify(req.body);
@@ -182,7 +172,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const amount = parseFloat(req.body.amount_gross);
       const reference = req.body.pf_payment_id;
       const referralCode = req.body.custom_str1 || null;
-      const units = Math.floor(amount / 140); // adjust for testing if needed
+      const units = Math.floor(amount / 140);
 
       await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
         email, amount: units, reference, referralCode
@@ -196,7 +186,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
   }
 });
 
-// Admin APIs
+// Admin panel routes
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   const logs = await Log.find().sort({ timestamp: -1 });
   res.json({ success: true, logs });
@@ -205,6 +195,11 @@ app.get('/admin/logs-data', isAdmin, async (req, res) => {
 app.get('/admin/codes', isAdmin, async (req, res) => {
   const codes = await Code.find();
   res.json({ success: true, codes });
+});
+
+app.get('/admin/visits', isAdmin, async (req, res) => {
+  const visits = await Visit.find().sort({ timestamp: -1 }).limit(100);
+  res.json({ success: true, visits });
 });
 
 app.post('/admin/upload-codes', isAdmin, async (req, res) => {
@@ -218,11 +213,6 @@ app.post('/admin/delete-codes', isAdmin, async (req, res) => {
   const { ids } = req.body;
   await Code.deleteMany({ _id: { $in: ids } });
   res.json({ success: true });
-});
-
-app.get('/admin/visits', isAdmin, async (req, res) => {
-  const visits = await Visit.find().sort({ timestamp: -1 }).limit(100);
-  res.json({ success: true, visits });
 });
 
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
