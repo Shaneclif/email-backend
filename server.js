@@ -1,4 +1,4 @@
-// server.js - PayFast integration with IPN & Code Emailing
+// server.js - Fully updated PayFast IPN + Code Delivery (Individual Account)
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -64,7 +64,6 @@ app.use(session({
   cookie: { secure: false, sameSite: 'lax', maxAge: 7200000 }
 }));
 
-// Nodemailer
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -74,7 +73,6 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// IP logging
 app.use(async (req, res, next) => {
   if (req.method === 'GET') {
     try {
@@ -84,13 +82,11 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Auth middleware
 function isAdmin(req, res, next) {
   if (req.session.admin) return next();
   res.status(403).json({ success: false });
 }
 
-// Admin Login
 app.post('/admin/login', (req, res) => {
   if (
     req.body.username === process.env.ADMIN_USERNAME &&
@@ -109,7 +105,6 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// Send Code
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
@@ -128,11 +123,7 @@ app.post('/send-code', async (req, res) => {
     if (codesToSend.length < amount) return res.status(400).json({ success: false });
 
     for (const code of codesToSend) {
-      await Code.findByIdAndUpdate(code._id, {
-        used: true,
-        usedBy: email,
-        usedAt: new Date()
-      });
+      await Code.findByIdAndUpdate(code._id, { used: true, usedBy: email, usedAt: new Date() });
     }
 
     const message = codesToSend.map((c, i) => `${i + 1}. ${c.code}`).join('\n');
@@ -176,7 +167,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// ✅ Correct PayFast IPN Route
+// ✅ Correct IPN endpoint for "Buy Now" buttons (Individual PayFast account)
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     const raw = qs.stringify(req.body);
@@ -191,7 +182,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const amount = parseFloat(req.body.amount_gross);
       const reference = req.body.pf_payment_id;
       const referralCode = req.body.custom_str1 || null;
-      const units = Math.floor(amount / 140); // adjust based on unit price
+      const units = Math.floor(amount / 140); // adjust for testing if needed
 
       await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
         email, amount: units, reference, referralCode
@@ -234,7 +225,4 @@ app.get('/admin/visits', isAdmin, async (req, res) => {
   res.json({ success: true, visits });
 });
 
-// Start
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
