@@ -202,7 +202,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const amount = parseFloat(raw.amount_gross);
       const reference = raw.pf_payment_id;
       const referralCode = raw.custom_str1 || null;
-      const units = isNaN(amount) ? 1 : Math.floor(amount /20);
+      const units = isNaN(amount) ? 1 : Math.floor(amount /140);
 
       console.log('💳 Sending to /send-code with:', { email, amount: units, reference, referralCode });
 
