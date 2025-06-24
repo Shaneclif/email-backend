@@ -53,6 +53,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(bodyParser.json());
+app.use(express.urlencoded({ extended: true })); // ✅ Add this to parse x-www-form-urlencoded properly
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
@@ -66,6 +67,7 @@ app.use(session({
     maxAge: 2 * 60 * 60 * 1000
   }
 }));
+
 
 // Mail
 const transporter = nodemailer.createTransport({
