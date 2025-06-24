@@ -13,11 +13,12 @@ const qs = require('querystring');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// Database
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB error:', err));
 
-// MODELS
+// Models
 const Code = mongoose.model('Code', new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   used: { type: Boolean, default: false },
@@ -45,7 +46,7 @@ const Visit = mongoose.model('Visit', new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 }));
 
-// MIDDLEWARE
+// Middleware
 app.set('trust proxy', 1);
 app.use(cors({
   origin: 'https://easystreamzy.com',
@@ -62,11 +63,11 @@ app.use(session({
     secure: true,
     httpOnly: true,
     sameSite: 'none',
-    maxAge: 7200000
+    maxAge: 2 * 60 * 60 * 1000
   }
 }));
 
-// MAIL
+// Mail
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -76,7 +77,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// VISIT TRACKING
+// Track visits
 app.use(async (req, res, next) => {
   if (req.method === 'GET') {
     try {
@@ -86,13 +87,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// ADMIN CHECK
+// Admin Middleware
 function isAdmin(req, res, next) {
   if (req.session.admin) return next();
   res.status(403).json({ success: false });
 }
 
-// LOGIN
+// Login
 app.post('/admin/login', (req, res) => {
   if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
@@ -108,7 +109,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// SEND CODE
+// Send Code
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
@@ -171,7 +172,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// PAYFAST IPN
+// IPN Handler
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     const isTestMode = process.env.TEST_MODE === 'true';
@@ -197,12 +198,24 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const referralCode = req.body.custom_str1 || null;
       const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
 
-      await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
+      console.log('💳 Sending to /send-code with:', {
         email,
         amount: units,
         reference,
         referralCode
       });
+
+      try {
+        const response = await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
+          email,
+          amount: units,
+          reference,
+          referralCode
+        });
+        console.log('✅ Code send response:', response.data);
+      } catch (err) {
+        console.error('❌ Failed to call /send-code:', err.response?.data || err.message);
+      }
     }
 
     res.status(200).send('OK');
@@ -212,7 +225,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
   }
 });
 
-// ADMIN ROUTES
+// Admin routes
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   const logs = await Log.find().sort({ timestamp: -1 });
   res.json({ success: true, logs });
@@ -241,5 +254,5 @@ app.post('/admin/delete-codes', isAdmin, async (req, res) => {
   res.json({ success: true });
 });
 
-// START
+// Start
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
