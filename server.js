@@ -52,9 +52,11 @@ app.use(cors({
   origin: 'https://easystreamzy.com',
   credentials: true
 }));
-app.use(bodyParser.json());
-app.use(express.urlencoded({ extended: true })); // ✅ Add this to parse x-www-form-urlencoded properly
-app.use(bodyParser.urlencoded({ extended: false }));
+
+app.use(express.urlencoded({ extended: true })); // ✅ Required for PayFast IPN parsing
+app.use(express.json()); // also keep this
+app.use(bodyParser.json()); // optional but can keep for compatibility
+
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
   secret: process.env.SESSION_SECRET || 'secret',
@@ -67,6 +69,7 @@ app.use(session({
     maxAge: 2 * 60 * 60 * 1000
   }
 }));
+
 
 
 // Mail
