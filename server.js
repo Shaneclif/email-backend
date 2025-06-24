@@ -170,7 +170,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// PayFast IPN route (with test mode toggle)
+// PayFast IPN route
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     const isTestMode = process.env.TEST_MODE === 'true';
@@ -197,7 +197,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const referralCode = req.body.custom_str1 || null;
       const units = Math.floor(amount / 140);
 
-      await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
+      await axios.post(`${process.env.BACKEND_BASE_URL || 'https://email-backend-vr8z.onrender.com'}/send-code`, {
         email, amount: units, reference, referralCode
       });
     }
