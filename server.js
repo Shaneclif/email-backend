@@ -13,12 +13,11 @@ const qs = require('querystring');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// Database
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch(err => console.error('❌ MongoDB error:', err));
 
-// Models
+// MODELS
 const Code = mongoose.model('Code', new mongoose.Schema({
   code: { type: String, required: true, unique: true },
   used: { type: Boolean, default: false },
@@ -46,17 +45,14 @@ const Visit = mongoose.model('Visit', new mongoose.Schema({
   timestamp: { type: Date, default: Date.now }
 }));
 
-// Middleware
+// MIDDLEWARE
 app.set('trust proxy', 1);
 app.use(cors({
   origin: 'https://easystreamzy.com',
   credentials: true
 }));
-
-app.use(express.urlencoded({ extended: true })); // ✅ Required for PayFast IPN parsing
-app.use(express.json()); // also keep this
-app.use(bodyParser.json()); // optional but can keep for compatibility
-
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
   store: new SQLiteStore({ db: 'sessions.sqlite', dir: path.join(__dirname, 'db') }),
   secret: process.env.SESSION_SECRET || 'secret',
@@ -70,9 +66,7 @@ app.use(session({
   }
 }));
 
-
-
-// Mail
+// MAIL
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -82,7 +76,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Track visits
+// VISIT TRACKING
 app.use(async (req, res, next) => {
   if (req.method === 'GET') {
     try {
@@ -92,13 +86,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// Admin Middleware
+// ADMIN CHECK
 function isAdmin(req, res, next) {
   if (req.session.admin) return next();
   res.status(403).json({ success: false });
 }
 
-// Login
+// LOGIN
 app.post('/admin/login', (req, res) => {
   if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
@@ -114,7 +108,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// Send Code
+// SEND CODE
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
@@ -177,9 +171,11 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
-// IPN Handler
+// PAYFAST IPN
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
+    console.log('📩 Incoming IPN:', req.body);
+
     const isTestMode = process.env.TEST_MODE === 'true';
     let valid = false;
 
@@ -197,7 +193,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
     if (!valid) return res.status(400).send('Invalid IPN');
 
     if (req.body.payment_status === 'COMPLETE') {
-      const email = req.body.email_address;
+      const email = req.body.email_address || req.body.email || 'undefined@fallback.com';
       const amount = parseFloat(req.body.amount_gross);
       const reference = req.body.pf_payment_id;
       const referralCode = req.body.custom_str1 || null;
@@ -210,16 +206,15 @@ app.post('/api/payfast/ipn', async (req, res) => {
         referralCode
       });
 
-      try {
-        const response = await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
-          email,
-          amount: units,
-          reference,
-          referralCode
-        });
-        console.log('✅ Code send response:', response.data);
-      } catch (err) {
-        console.error('❌ Failed to call /send-code:', err.response?.data || err.message);
+      const response = await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
+        email,
+        amount: units,
+        reference,
+        referralCode
+      });
+
+      if (!response.data.success) {
+        console.error('❌ Failed to call /send-code:', response.data);
       }
     }
 
@@ -230,7 +225,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
   }
 });
 
-// Admin routes
+// ADMIN ROUTES
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   const logs = await Log.find().sort({ timestamp: -1 });
   res.json({ success: true, logs });
@@ -259,5 +254,5 @@ app.post('/admin/delete-codes', isAdmin, async (req, res) => {
   res.json({ success: true });
 });
 
-// Start
+// START
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
