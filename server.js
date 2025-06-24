@@ -1,4 +1,3 @@
-// Updated server.js with detailed debug logs to trace code email issues
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
@@ -14,9 +13,8 @@ const qs = require('querystring');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected'))
-  .catch(err => console.error('❌ MongoDB error:', err));
+// MongoDB
+mongoose.connect(process.env.MONGO_URI).then(() => console.log('✅ MongoDB connected')).catch(err => console.error('❌ MongoDB error:', err));
 
 // Models
 const Code = mongoose.model('Code', new mongoose.Schema({
@@ -48,7 +46,10 @@ const Visit = mongoose.model('Visit', new mongoose.Schema({
 
 // Middleware
 app.set('trust proxy', 1);
-app.use(cors({ origin: 'https://easystreamzy.com', credentials: true }));
+app.use(cors({
+  origin: 'https://easystreamzy.com',
+  credentials: true
+}));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(session({
@@ -56,9 +57,15 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: true, httpOnly: true, sameSite: 'none', maxAge: 7200000 }
+  cookie: {
+    secure: true,
+    httpOnly: true,
+    sameSite: 'none',
+    maxAge: 7200000
+  }
 }));
 
+// Mailer
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
   port: 587,
@@ -68,6 +75,7 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+// Log visits
 app.use(async (req, res, next) => {
   if (req.method === 'GET') {
     try {
@@ -77,11 +85,13 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// Admin middleware
 function isAdmin(req, res, next) {
   if (req.session.admin) return next();
   res.status(403).json({ success: false });
 }
 
+// Admin login
 app.post('/admin/login', (req, res) => {
   if (req.body.username === process.env.ADMIN_USERNAME && req.body.password === process.env.ADMIN_PASSWORD) {
     req.session.admin = true;
@@ -97,23 +107,22 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
+// Send code route
 app.post('/send-code', async (req, res) => {
-  console.log("🔥 /send-code hit with body:", req.body);
   try {
     const { email, amount, reference, referralCode } = req.body;
     if (!email || !amount || !reference) return res.status(400).json({ success: false });
 
     let user = await User.findOne({ email });
     if (!user) {
-      let newCode;
-      do {
+      let newCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+      while (await User.findOne({ referralCode: newCode })) {
         newCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-      } while (await User.findOne({ referralCode: newCode }));
+      }
       user = await User.create({ email, referralCode: newCode, referred: [], codesEarned: 0 });
     }
 
     const codesToSend = await Code.find({ used: false }).limit(amount);
-    console.log("🧾 Codes found:", codesToSend.map(c => c.code));
     if (codesToSend.length < amount) return res.status(400).json({ success: false });
 
     for (const code of codesToSend) {
@@ -121,13 +130,12 @@ app.post('/send-code', async (req, res) => {
     }
 
     const message = codesToSend.map((c, i) => `${i + 1}. ${c.code}`).join('\n');
-    console.log("📧 Sending email to", email);
     await transporter.sendMail({
       from: `EasyStreamzy <no-reply@easystreamzy.com>`,
       to: email,
       subject: 'Your EasyStreamzy Access Codes',
       text: `Here are your codes:\n\n${message}\n\nRefer friends: https://easystreamzy.com/?ref=${user.referralCode}`
-    }).catch(err => console.error("❌ Email send error:", err));
+    });
 
     await Log.create({ email, amount, reference });
 
@@ -147,7 +155,7 @@ app.post('/send-code', async (req, res) => {
               to: referrer.email,
               subject: 'Free Bonus Code',
               text: `Thanks for referring! Here's your bonus code: ${bonus.code}`
-            }).catch(err => console.error("❌ Bonus email error:", err));
+            });
             referrer.codesEarned += 1;
           }
         }
@@ -162,19 +170,25 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
+// PayFast IPN route (with test mode toggle)
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
-    const raw = qs.stringify(req.body);
-    console.log("💰 PayFast IPN received:", req.body);
+    const isTestMode = process.env.TEST_MODE === 'true';
 
-    const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', raw, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    });
+    let valid = false;
 
-    if (verify.data !== 'VALID') {
-      console.log("❌ Invalid IPN response from PayFast");
-      return res.status(400).send('Invalid IPN');
+    if (isTestMode) {
+      console.log('🧪 Test mode enabled – skipping IPN validation');
+      valid = true;
+    } else {
+      const raw = qs.stringify(req.body);
+      const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', raw, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+      valid = verify.data === 'VALID';
     }
+
+    if (!valid) return res.status(400).send('Invalid IPN');
 
     if (req.body.payment_status === 'COMPLETE') {
       const email = req.body.email_address;
@@ -182,8 +196,6 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const reference = req.body.pf_payment_id;
       const referralCode = req.body.custom_str1 || null;
       const units = Math.floor(amount / 140);
-
-      console.log("✅ Valid IPN. Triggering /send-code with:", { email, amount: units, reference, referralCode });
 
       await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
         email, amount: units, reference, referralCode
