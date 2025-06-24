@@ -197,7 +197,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const referralCode = req.body.custom_str1 || null;
       const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
 
-      await axios.post(`${process.env.FRONTEND_BASE_URL || 'https://easystreamzy.com'}/send-code`, {
+      await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
         email,
         amount: units,
         reference,
