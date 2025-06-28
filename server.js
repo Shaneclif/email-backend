@@ -202,7 +202,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const amount = parseFloat(raw.amount_gross);
       const reference = raw.pf_payment_id;
       const referralCode = raw.custom_str1 || null;
-      const units = isNaN(amount) ? 1 : Math.floor(amount /140);
+      const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
 
       console.log('💳 Sending to /send-code with:', { email, amount: units, reference, referralCode });
 
@@ -252,6 +252,33 @@ app.post('/admin/delete-codes', isAdmin, async (req, res) => {
   const { ids } = req.body;
   await Code.deleteMany({ _id: { $in: ids } });
   res.json({ success: true });
+});
+
+// ✅ AI Chatbot Route (added safely at the end)
+app.post('/api/chatbot', async (req, res) => {
+  try {
+    const { message, history = [] } = req.body;
+
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: 'You are EasyBot, a friendly AI receptionist for EasyStreamzy. Help users with vouchers, payments, and support.' },
+        ...history,
+        { role: 'user', content: message }
+      ]
+    }, {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const reply = response.data.choices[0].message.content;
+    res.json({ success: true, reply });
+  } catch (err) {
+    console.error('❌ Chatbot error:', err?.response?.data || err);
+    res.status(500).json({ success: false, message: 'Chatbot failed' });
+  }
 });
 
 // Start
