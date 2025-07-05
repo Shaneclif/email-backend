@@ -204,7 +204,7 @@ app.post('/api/payfast/ipn', async (req, res) => {
         raw[key.trim()] = req.body[key]?.trim?.() || req.body[key];
       }
 
-      const email = raw.email_address || raw.email || 'undefined@fallback.com';
+      const email = raw.custom_str1 || raw.email_address || raw.email || 'undefined@fallback.com';
       const amount = parseFloat(raw.amount_gross);
       const reference = raw.pf_payment_id;
       const referralCode = raw.custom_str1 || null;
