@@ -176,6 +176,7 @@ app.post('/send-code', async (req, res) => {
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
     console.log('📩 Incoming IPN:', req.body);
+
     const isTestMode = process.env.TEST_MODE === 'true';
     let valid = false;
 
@@ -187,15 +188,20 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', raw, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       });
+
       valid = verify.data === 'VALID';
+      console.log('✅ IPN validation result:', verify.data);
     }
 
-    if (!valid) return res.status(400).send('Invalid IPN');
+    if (!valid) {
+      console.log('❌ Invalid IPN received.');
+      return res.status(400).send('Invalid IPN');
+    }
 
     if (req.body.payment_status === 'COMPLETE') {
       const raw = {};
       for (const key in req.body) {
-        raw[key.trim()] = req.body[key].trim?.() || req.body[key];
+        raw[key.trim()] = req.body[key]?.trim?.() || req.body[key];
       }
 
       const email = raw.email_address || raw.email || 'undefined@fallback.com';
@@ -204,7 +210,12 @@ app.post('/api/payfast/ipn', async (req, res) => {
       const referralCode = raw.custom_str1 || null;
       const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
 
-      console.log('💳 Sending to /send-code with:', { email, amount: units, reference, referralCode });
+      console.log('💳 Payment Details:');
+      console.log('  Email:', email);
+      console.log('  Amount:', amount);
+      console.log('  Reference:', reference);
+      console.log('  ReferralCode:', referralCode);
+      console.log('  Units to send:', units);
 
       const response = await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
         email,
@@ -213,14 +224,18 @@ app.post('/api/payfast/ipn', async (req, res) => {
         referralCode
       });
 
+      console.log('📬 /send-code response:', response.data);
+
       if (!response.data.success) {
-        console.error('❌ Failed to call /send-code:', response.data);
+        console.error('❌ Failed to send codes:', response.data);
       }
+    } else {
+      console.log('⏳ Payment status not COMPLETE:', req.body.payment_status);
     }
 
     res.status(200).send('OK');
   } catch (err) {
-    console.error('IPN error:', err);
+    console.error('🔥 IPN error:', err?.response?.data || err);
     res.status(500).send('Error');
   }
 });
