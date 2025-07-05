@@ -112,8 +112,15 @@ app.get('/admin/logout', (req, res) => {
 // Send Code + Referral Logic
 app.post('/send-code', async (req, res) => {
   try {
+    const authKey = req.headers['x-secret-key'];
+    if (authKey !== process.env.SEND_CODE_KEY) {
+      return res.status(403).json({ success: false, message: 'Unauthorized' });
+    }
+
     const { email, amount, reference, referralCode } = req.body;
-    if (!email || !amount || isNaN(amount) || !reference) return res.status(400).json({ success: false });
+    if (!email || !amount || isNaN(amount) || !reference) {
+      return res.status(400).json({ success: false });
+    }
 
     let user = await User.findOne({ email });
     if (!user) {
@@ -172,6 +179,7 @@ app.post('/send-code', async (req, res) => {
   }
 });
 
+
 // IPN Listener
 app.post('/api/payfast/ipn', async (req, res) => {
   try {
@@ -181,9 +189,12 @@ app.post('/api/payfast/ipn', async (req, res) => {
     let valid = false;
 
     if (isTestMode) {
-      console.log('🧪 Test mode enabled – skipping IPN validation');
-      valid = true;
-    } else {
+  console.log('🧪 Test mode enabled – test mode IPN accepted only if payment_status=COMPLETE');
+  valid = req.body.payment_status === 'COMPLETE';
+}
+
+    
+    else {
       const raw = qs.stringify(req.body);
       const verify = await axios.post('https://www.payfast.co.za/eng/query/validate', raw, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
