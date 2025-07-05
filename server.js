@@ -109,7 +109,7 @@ app.get('/admin/logout', (req, res) => {
   });
 });
 
-// Send Code
+// Send Code + Referral Logic
 app.post('/send-code', async (req, res) => {
   try {
     const { email, amount, reference, referralCode } = req.body;
@@ -225,6 +225,34 @@ app.post('/api/payfast/ipn', async (req, res) => {
   }
 });
 
+// ✅ Referral Tracker Endpoint
+app.get('/api/referrals/status', async (req, res) => {
+  const { email } = req.query;
+
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ success: false, message: 'Invalid email' });
+  }
+
+  try {
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.json({ success: true, email, totalReferrals: 0, codesEarned: 0 });
+    }
+
+    res.json({
+      success: true,
+      email,
+      totalReferrals: user.referred?.length || 0,
+      referralCode: user.referralCode,
+      codesEarned: user.codesEarned || 0
+    });
+  } catch (err) {
+    console.error('❌ Referral tracker error:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
 // Admin Routes
 app.get('/admin/logs-data', isAdmin, async (req, res) => {
   const logs = await Log.find().sort({ timestamp: -1 });
@@ -254,7 +282,7 @@ app.post('/admin/delete-codes', isAdmin, async (req, res) => {
   res.json({ success: true });
 });
 
-// ✅ AI Chatbot Route (added safely at the end)
+// ✅ AI Chatbot Route
 app.post('/api/chatbot', async (req, res) => {
   try {
     const { message, history = [] } = req.body;
@@ -281,5 +309,5 @@ app.post('/api/chatbot', async (req, res) => {
   }
 });
 
-// Start
+// Start Server
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
