@@ -215,11 +215,11 @@ app.post('/api/payfast/ipn', async (req, res) => {
         raw[key.trim()] = req.body[key]?.trim?.() || req.body[key];
       }
 
-      const email = raw.custom_str1 || raw.email_address || raw.email || 'undefined@fallback.com';
-      const amount = parseFloat(raw.amount_gross);
-      const reference = raw.pf_payment_id;
-      const referralCode = raw.custom_str1 || null;
-      const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
+     const email = raw.custom_str1 || raw.email_address || raw.email || 'undefined@fallback.com';
+     const amount = parseFloat(raw.amount_gross);
+     const reference = raw.pf_payment_id;
+     const referralCode = raw.custom_str2 || null; // ✅ use the correct one
+     const units = isNaN(amount) ? 1 : Math.floor(amount / 140);
 
       console.log('💳 Payment Details:');
       console.log('  Email:', email);
@@ -229,11 +229,15 @@ app.post('/api/payfast/ipn', async (req, res) => {
       console.log('  Units to send:', units);
 
       const response = await axios.post('https://email-backend-vr8z.onrender.com/send-code', {
-        email,
-        amount: units,
-        reference,
-        referralCode
-      });
+  email,
+  amount: units,
+  reference,
+  referralCode
+}, {
+  headers: {
+    'x-secret-key': process.env.SEND_CODE_KEY
+  }
+});
 
       console.log('📬 /send-code response:', response.data);
 
