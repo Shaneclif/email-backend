@@ -143,7 +143,7 @@ app.post('/send-code', async (req, res) => {
       from: `EasyStreamzy <no-reply@easystreamzy.com>`,
       to: email,
       subject: 'Your EasyStreamzy Access Codes',
-      text: `Here are your codes:\n\n${message}\n\nRefer friends: https://easystreamzy.com/?ref=${user.referralCode}`
+      text: `Here are your codes:\n\n${message}\n\n If you need any assistance contact +27 61 288 5097 on WhatsApp`
     });
 
     await Log.create({ email, amount, reference });
