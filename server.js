@@ -131,11 +131,20 @@ app.post('/send-code', async (req, res) => {
       user = await User.create({ email, referralCode: newCode, referred: [], codesEarned: 0 });
     }
 
-    const codesToSend = await Code.find({ used: false }).limit(amount);
-    if (codesToSend.length < amount) return res.status(400).json({ success: false });
+    // Atomic code assignment to prevent race conditions
+    const codesToSend = [];
+    for (let i = 0; i < amount; i++) {
+      const code = await Code.findOneAndUpdate(
+        { used: false },
+        { used: true, usedBy: email, usedAt: new Date() },
+        { new: true }
+      );
+      if (!code) break;
+      codesToSend.push(code);
+    }
 
-    for (const code of codesToSend) {
-      await Code.findByIdAndUpdate(code._id, { used: true, usedBy: email, usedAt: new Date() });
+    if (codesToSend.length < amount) {
+      return res.status(400).json({ success: false, message: 'Insufficient codes available' });
     }
 
     const message = codesToSend.map((c, i) => `${i + 1}. ${c.code}`).join('\n');
@@ -143,10 +152,10 @@ app.post('/send-code', async (req, res) => {
       from: `EasyStreamzy <no-reply@easystreamzy.com>`,
       to: email,
       subject: 'Your EasyStreamzy Access Codes',
-      text: `Here are your codes:\n\n${message}\n\n If you need any assistance contact +27 61 288 5097 on WhatsApp`
+      text: `Here are your codes:\n\n${message}\n\n If you need any assistance contact .... on WhatsApp`
     });
 
-    await Log.create({ email, amount, reference });
+    // Logging handled by IPN listener with correct payment amount
 
     if (referralCode && referralCode !== user.referralCode) {
       const referrer = await User.findOne({ referralCode });
@@ -238,6 +247,9 @@ app.post('/api/payfast/ipn', async (req, res) => {
     'x-secret-key': process.env.SEND_CODE_KEY
   }
 });
+
+      // Log the actual payment amount, not the units
+      await Log.create({ email, amount, reference });
 
       console.log('📬 /send-code response:', response.data);
 
@@ -341,3 +353,4 @@ app.post('/api/chatbot', async (req, res) => {
 
 // Start Server
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
